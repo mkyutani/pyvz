@@ -14,15 +14,45 @@ terminal width).
 
 ## Status
 
-Under development. Nothing is usable yet.
+Under development. The editor works on the terminal with VZ's keys for moving,
+typing, saving and closing, and with Claude Code as below. The filer, blocks, the
+text stack, search and the other commands are still to come.
 
-## Planned usage
+## Usage
 
 ```sh
 pyvz FILE...     # edit files
-pyvz [DIR]       # start from the filer
+pyvz [DIR]       # start from the filer (not yet)
 pyvz -c FILE     # edit a prompt file from Claude Code's Ctrl-G (external editor)
 ```
+
+To install the command from a checkout:
+
+```sh
+uv tool install --editable .
+```
+
+### With Claude Code
+
+Claude Code opens `$VISUAL` (or else `$EDITOR`) on Ctrl-G. Set it to `pyvz -c` for
+Claude Code only, for example with an alias:
+
+```sh
+alias claude='VISUAL="pyvz -c" claude'
+```
+
+In the editor:
+
+| Keys | What happens |
+|---|---|
+| `[ESC]C` | Save and give the text to Claude Code's input box (no question asked) |
+| `[ESC]E` | Put the text on hold and go back with the input box unchanged. The next Ctrl-G in the same session opens the draft again |
+| `[ESC]Q`, `@X` | Quit; the prompt text goes to Claude Code as with `[ESC]C` |
+
+A draft on hold belongs to one Claude Code session. If text was typed into the input
+box meanwhile, it is added after the draft. A draft left by a session that has ended
+opens in a later session, drafts from the same directory first, so nothing is lost.
+If pyvz ends unexpectedly, the text is kept as a draft too.
 
 Settings go to `~/.config/pyvz/config.toml`, and state (filer position, histories,
 drafts on hold) to `~/.local/state/pyvz/`, following the XDG Base Directory

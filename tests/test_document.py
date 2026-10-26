@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from pyvz.text.document import Document, FileFormat, decode, encode
+from pyvz.text.document import Document, FileFormat, decode, encode, write_file
 
 
 @pytest.mark.parametrize(
@@ -116,3 +116,12 @@ def test_save_leaves_no_temporary_file(tmp_path: Path):
 def test_save_without_a_name_fails():
     with pytest.raises(ValueError):
         Document().save()
+
+
+def test_write_file_with_explicit_mode(tmp_path: Path):
+    path = tmp_path / "secret.json"
+    path.write_text("old")
+    path.chmod(0o644)
+    write_file(path, b"new", mode=0o600)
+    assert path.read_bytes() == b"new"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600

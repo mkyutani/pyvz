@@ -23,6 +23,7 @@ class Window:
         self.layout = layout
         self.height = 1  # rows of text in the window
         self.cc = cc  # the prompt file of Claude Code
+        self.draft = False  # the text came from a draft on hold
         self.line = 0
         self.index = 0
         # The column that up and down keep to, while the lines on the way are shorter.

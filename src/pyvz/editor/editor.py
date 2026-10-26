@@ -24,6 +24,18 @@ class Console(Protocol):
         ...
 
 
+class Prompt(Protocol):
+    """The prompt file of Claude Code, which can be put on hold as a draft."""
+
+    def hold(self, window: Window) -> None:
+        """Keep the text as the draft, leaving the prompt file as it was."""
+        ...
+
+    def passed(self, window: Window) -> None:
+        """The text was saved to the prompt file, so the draft is done."""
+        ...
+
+
 # Commands that change the text, refused for a read-only text.
 _EDITS = {Cmd.RETURN, Cmd.BACKSPACE, Cmd.DELETE, Cmd.TAB}
 
@@ -38,6 +50,7 @@ class Editor:
         self.insert_mode = True
         # Set when the editor is to end, to the exit status of the program.
         self.exit_code: int | None = None
+        self.prompt: Prompt | None = None
         self._last: tuple[int, int | None] | None = None
         self._commands: dict[int, Callable[[int | None], object]] = {
             Cmd.REPEAT: self._repeat,
@@ -83,12 +96,17 @@ class Editor:
 
     def open(self, path: Path, *, cc: bool = False, readonly: bool = False) -> Window:
         doc = Document.load(path, readonly=readonly)
-        window = Window(doc, self.layout, cc=cc)
+        window = self.add(Window(doc, self.layout, cc=cc))
+        if doc.new_file and not cc:
+            self.console.message("新規ファイルです")
+        return window
+
+    def add(self, window: Window) -> Window:
+        """Show a window made elsewhere, such as the prompt file of Claude Code."""
+        window.layout = self.layout
         window.height = self.height
         self.windows.append(window)
         self.current = len(self.windows) - 1
-        if doc.new_file and not cc:
-            self.console.message("新規ファイルです")
         return window
 
     def resize(self, width: int, height: int) -> None:
@@ -177,17 +195,17 @@ class Editor:
         """Close the text, asking whether to save it if it was changed.
 
         The prompt file of Claude Code is saved without asking: closing it is how the
-        text goes back to Claude Code.
+        text goes back to Claude Code, and the editor ends with it.
         """
         window = self.window
+        if window.cc:
+            if self._save_others() and self._pass(window):
+                self.exit_code = 0
+            return
         if window.doc.modified:
-            if window.cc:
-                if not self.save(window):
-                    return
-            else:
-                answer = self.console.ask(f"{self.name(window)} を出力します")
-                if answer is None or (answer and not self.save(window)):
-                    return
+            answer = self.console.ask(f"{self.name(window)} を出力します")
+            if answer is None or (answer and not self.save(window)):
+                return
         self._remove(window)
 
     def _remove(self, window: Window) -> None:
@@ -199,26 +217,67 @@ class Editor:
         if self.current >= index:
             self.current = max(self.current - 1, 0)
 
+    def _changed_files(self) -> list[Window]:
+        """Changed texts other than the prompt file of Claude Code."""
+        return [w for w in self.windows if w.doc.modified and not w.cc]
+
+    def _save_others(self) -> bool:
+        """Ask whether to save the changed texts, and save them. False if cancelled."""
+        changed = self._changed_files()
+        if not changed:
+            return True
+        answer = self.console.ask("修正テキストを出力します")
+        if answer is None:
+            return False
+        return not answer or all(self.save(w) for w in changed)
+
+    def _pass(self, window: Window) -> bool:
+        """Save the prompt file of Claude Code, which hands the text to Claude Code."""
+        if window.doc.modified and not self.save(window):
+            return False
+        if self.prompt is not None:
+            self.prompt.passed(window)
+        return True
+
+    def _pass_prompts(self) -> bool:
+        return all(self._pass(w) for w in self.windows if w.cc)
+
     def quit(self) -> None:
-        modified = [w for w in self.windows if w.doc.modified]
-        if modified:
-            answer = self.console.ask("修正テキストを出力します")
-            if answer is None:
-                return
-            if answer and not all(self.save(w) for w in modified):
-                return
-        if self.console.ask("エディタを終了します"):
+        """Quit, asking whether to save the changed texts and whether to quit.
+
+        The prompt file of Claude Code is saved without asking, as on closing it.
+        """
+        if not self._save_others():
+            return
+        if self.console.ask("エディタを終了します") and self._pass_prompts():
             self.exit_code = 0
 
     def escape(self) -> None:
-        """Quit without saving, asking first if a text was changed."""
-        if any(w.doc.modified for w in self.windows):
-            if not self.console.ask("編集テキストを放棄します"):
-                return
-        self.exit_code = 0
+        """Quit without saving, asking first if a text was changed.
+
+        The prompt file of Claude Code is still saved: the way to leave its text out of
+        Claude Code's input box is putting it on hold.
+        """
+        if self._changed_files() and not self.console.ask("編集テキストを放棄します"):
+            return
+        if self._pass_prompts():
+            self.exit_code = 0
 
     def hold(self) -> None:
-        if not self.window.cc:
+        """Put the prompt text on hold and go back to Claude Code (VZ: go to DOS).
+
+        Claude Code's input box stays as it was, and the next call from Claude Code
+        shows the draft again.
+        """
+        window = self.window
+        if not window.cc or self.prompt is None:
             self.console.message("Claude Code から呼ばれていません")
             return
-        self.console.message("下書きの保留はまだできません")
+        if not self._save_others():
+            return
+        try:
+            self.prompt.hold(window)
+        except OSError as e:
+            self.console.message(f"下書きを保存できません（{e.strerror or e}）")
+            return
+        self.exit_code = 0

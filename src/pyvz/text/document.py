@@ -63,18 +63,19 @@ def _default_mode() -> int:
     return 0o666 & ~umask
 
 
-def write_file(path: Path, data: bytes) -> None:
+def write_file(path: Path, data: bytes, *, mode: int | None = None) -> None:
     """Write `data` to `path` without leaving a half-written file behind.
 
     The data goes to a temporary file in the same directory, which then replaces the
-    file. The permission bits of the file are kept. A symbolic link is followed, so
-    the file it points to is replaced and the link stays.
+    file. The permission bits of the file are kept, unless `mode` is given. A symbolic
+    link is followed, so the file it points to is replaced and the link stays.
     """
     target = Path(os.path.realpath(path))
-    try:
-        mode = stat.S_IMODE(target.stat().st_mode)
-    except FileNotFoundError:
-        mode = _default_mode()
+    if mode is None:
+        try:
+            mode = stat.S_IMODE(target.stat().st_mode)
+        except FileNotFoundError:
+            mode = _default_mode()
     fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f:

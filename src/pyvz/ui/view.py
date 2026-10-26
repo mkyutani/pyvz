@@ -60,7 +60,8 @@ def _status(screen: Screen, editor: Editor) -> None:
     window = editor.window
     doc = window.doc
     number = f" {editor.current + 1} "
-    marks = (" (CC)" if window.cc else "") + (" *" if doc.modified else "")
+    marks = (" (CC 下書き)" if window.draft else " (CC)") if window.cc else ""
+    marks += " *" if doc.modified else ""
     folded = window.folded(window.line)
     column = sum(folded.widths[: window.index]) + 1
     flags = ("R " if doc.readonly else "") + "P " + ("挿入" if editor.insert_mode else "上書")
