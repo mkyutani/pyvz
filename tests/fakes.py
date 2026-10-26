@@ -29,3 +29,29 @@ class FakeTerminal:
 
     def write(self, text: str) -> None:
         self.output.append(text)
+
+
+class FakeConsole:
+    """Answers questions, input boxes and menus from a queue, in the order asked."""
+
+    def __init__(self, *answers: object) -> None:
+        self.answers = list(answers)
+        self.questions: list[str] = []
+        self.messages: list[str] = []
+        self.boxes: list[tuple[str, str]] = []  # (title, text shown first)
+        self.menus: list[list[tuple[str, str]]] = []
+
+    def message(self, text: str) -> None:
+        self.messages.append(text)
+
+    def ask(self, question: str) -> bool | None:
+        self.questions.append(question)
+        return self.answers.pop(0)
+
+    def gets(self, title: str, text: str = "", *, kind: str = "") -> str | None:
+        self.boxes.append((title, text))
+        return self.answers.pop(0)
+
+    def menu(self, items, *, title: str = ""):
+        self.menus.append(list(items))
+        return self.answers.pop(0)

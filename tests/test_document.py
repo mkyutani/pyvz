@@ -30,7 +30,7 @@ def test_decode_encode_round_trip(data: bytes):
 def test_line_ending_follows_the_majority():
     lines, fmt = decode(b"a\r\nb\r\nc\n")
     assert fmt.newline == "\r\n"
-    assert lines == ["a", "b", "c"]
+    assert lines == ["a", "b", "c", ""]  # the empty line is the end of the text
     # The bare LF is written back as CR LF.
     assert encode(lines, fmt) == b"a\r\nb\r\nc\r\n"
 
@@ -38,7 +38,7 @@ def test_line_ending_follows_the_majority():
 def test_cr_stays_in_a_mostly_lf_file():
     lines, fmt = decode(b"a\nb\r\nc\n")
     assert fmt.newline == "\n"
-    assert lines == ["a", "b\r", "c"]
+    assert lines == ["a", "b\r", "c", ""]
 
 
 def test_empty_file_is_one_empty_line():
@@ -77,6 +77,15 @@ def test_new_file_is_saved_with_lf_and_final_newline(tmp_path: Path):
     doc.save()
     assert path.read_bytes() == b"hello\n"
     assert not doc.new_file
+    doc.lines = ["hello", ""]  # it ends with a line end already
+    doc.save()
+    assert path.read_bytes() == b"hello\n"
+
+
+def test_empty_new_file_stays_empty(tmp_path: Path):
+    path = tmp_path / "new.txt"
+    Document.load(path).save()
+    assert path.read_bytes() == b""
 
 
 def test_save_under_another_name_renames_the_document(tmp_path: Path):
@@ -101,7 +110,7 @@ def test_save_through_a_symlink_replaces_the_target(tmp_path: Path):
     link = tmp_path / "link.txt"
     link.symlink_to(target)
     doc = Document.load(link)
-    doc.lines = ["new"]
+    doc.lines = ["new", ""]
     doc.save()
     assert link.is_symlink()
     assert target.read_bytes() == b"new\n"

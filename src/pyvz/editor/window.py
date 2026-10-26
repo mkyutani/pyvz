@@ -15,6 +15,12 @@ from pyvz.text.document import Document
 from pyvz.text.width import next_tab_stop
 
 Row = tuple[int, int]
+Pos = tuple[int, int]
+
+# Kinds of blocks, and of what the text stack holds.
+LINE = "line"
+CHAR = "char"
+BLOCK = "block"  # the mark where the block starts
 
 
 class Window:
@@ -29,6 +35,10 @@ class Window:
         # The column that up and down keep to, while the lines on the way are shorter.
         self.want: int | None = None
         self.top: Row = (0, 0)
+        # Positions that move with the text when it changes, such as "block", the
+        # start of a block.
+        self.marks: dict[str, Pos] = {}
+        self.block: str | None = None  # LINE or CHAR while marking a block
 
     @property
     def lines(self) -> list[str]:
@@ -251,33 +261,83 @@ class Window:
         self.top, _ = self.step(self.cursor_row(), -(self.height - 1))
 
     # Editing
+    #
+    # Every change goes through _insert_at and _delete_between, which move the cursor
+    # and the marks (the start of a block) along with the text.
 
     def _touch(self) -> None:
         self.doc.modified = True
 
-    def insert(self, text: str) -> None:
-        """Insert text at the cursor and move past it. LF in `text` splits lines."""
-        current = self.lines[self.line]
-        before, after = current[: self.index], current[self.index :]
+    def text_between(self, start: Pos, end: Pos) -> str:
+        (l1, i1), (l2, i2) = start, end
+        if l1 == l2:
+            return self.lines[l1][i1:i2]
+        return "\n".join([self.lines[l1][i1:], *self.lines[l1 + 1 : l2], self.lines[l2][:i2]])
+
+    def _insert_at(self, pos: Pos, text: str) -> Pos:
+        """Insert text at `pos`. Returns the end of it. Positions at `pos` or after it
+        (the cursor among them) move past the text."""
+        line, index = pos
+        current = self.lines[line]
         parts = text.split("\n")
         if len(parts) == 1:
-            self.lines[self.line] = before + text + after
-            self._go(self.line, self.index + len(text))
+            self.lines[line] = current[:index] + text + current[index:]
+            end = (line, index + len(text))
         else:
-            self.lines[self.line : self.line + 1] = (
-                [before + parts[0], *parts[1:-1], parts[-1] + after]
+            self.lines[line : line + 1] = (
+                [current[:index] + parts[0], *parts[1:-1], parts[-1] + current[index:]]
             )  # fmt: skip
-            self._go(self.line + len(parts) - 1, len(parts[-1]))
+            end = (line + len(parts) - 1, len(parts[-1]))
+
+        def moved(p: Pos) -> Pos:
+            if p < pos:
+                return p
+            if p[0] == line:
+                return end[0], end[1] + p[1] - index
+            return p[0] + len(parts) - 1, p[1]
+
+        self._move_positions(moved)
         self._touch()
+        return end
+
+    def _delete_between(self, start: Pos, end: Pos) -> str:
+        """Delete from `start` to `end`. Positions inside go to `start`."""
+        text = self.text_between(start, end)
+        (l1, i1), (l2, i2) = start, end
+        self.lines[l1 : l2 + 1] = [self.lines[l1][:i1] + self.lines[l2][i2:]]
+
+        def moved(p: Pos) -> Pos:
+            if p <= start:
+                return p
+            if p <= end:
+                return start
+            if p[0] == l2:
+                return l1, i1 + p[1] - i2
+            return p[0] - (l2 - l1), p[1]
+
+        self._move_positions(moved)
+        if text:
+            self._touch()
+        return text
+
+    def _move_positions(self, moved) -> None:
+        self.line, self.index = moved((self.line, self.index))
+        self.want = None
+        for name, pos in self.marks.items():
+            self.marks[name] = moved(pos)
+
+    def clamp(self, pos: Pos) -> Pos:
+        line = max(0, min(pos[0], len(self.lines) - 1))
+        return line, max(0, min(pos[1], len(self.lines[line])))
+
+    def insert(self, text: str) -> None:
+        """Insert text at the cursor and move past it. LF in `text` splits lines."""
+        self._insert_at((self.line, self.index), text)
 
     def overwrite(self, ch: str) -> None:
-        current = self.lines[self.line]
-        if self.index < len(current):
-            self.lines[self.line] = current[: self.index] + ch + current[self.index + 1 :]
-            self._go(self.line, self.index + 1)
-            self._touch()
-        else:
-            self.insert(ch)
+        if self.index < len(self.lines[self.line]):
+            self._delete_between((self.line, self.index), (self.line, self.index + 1))
+        self.insert(ch)
 
     def newline(self, *, overwrite: bool = False) -> None:
         """The return key: split the line, with the indent of the line before.
@@ -286,13 +346,12 @@ class Window:
         the next line, adding one at the end of the text (VZ).
         """
         if overwrite:
-            if self.line + 1 == len(self.lines):
-                self.lines.append("")
-                self._touch()
-            self._go(self.line + 1, 0)
+            line = self.line
+            if line + 1 == len(self.lines):
+                self._insert_at((line, len(self.lines[line])), "\n")
+            self._go(line + 1, 0)
             return
-        current = self.lines[self.line]
-        head = current[: self.index]
+        head = self.lines[self.line][: self.index]
         indent = head[: len(head) - len(head.lstrip(" \t"))]
         self.insert("\n" + indent)
 
@@ -302,34 +361,20 @@ class Window:
         Returns what was deleted ("\\n" for a join), or None at the top of the text.
         """
         if self.index > 0:
-            current = self.lines[self.line]
-            deleted = current[self.index - 1]
-            self.lines[self.line] = current[: self.index - 1] + current[self.index :]
-            self._go(self.line, self.index - 1)
-        elif self.line > 0:
-            above = self.lines[self.line - 1]
-            self.lines[self.line - 1] = above + self.lines.pop(self.line)
-            self._go(self.line - 1, len(above))
-            deleted = "\n"
-        else:
-            return None
-        self._touch()
-        return deleted
+            return self._delete_between((self.line, self.index - 1), (self.line, self.index))
+        if self.line > 0:
+            above = (self.line - 1, len(self.lines[self.line - 1]))
+            return self._delete_between(above, (self.line, 0))
+        return None
 
     def delete(self) -> str | None:
         """Delete the character at the cursor, or join the next line to this one."""
-        current = self.lines[self.line]
-        if self.index < len(current):
-            deleted = current[self.index]
-            self.lines[self.line] = current[: self.index] + current[self.index + 1 :]
-        elif self.line + 1 < len(self.lines):
-            self.lines[self.line] = current + self.lines.pop(self.line + 1)
-            deleted = "\n"
-        else:
-            return None
-        self.want = None
-        self._touch()
-        return deleted
+        here = (self.line, self.index)
+        if self.index < len(self.lines[self.line]):
+            return self._delete_between(here, (self.line, self.index + 1))
+        if self.line + 1 < len(self.lines):
+            return self._delete_between(here, (self.line + 1, 0))
+        return None
 
     def tab(self, *, overwrite: bool = False) -> None:
         """Insert a tab, or in overwrite mode move to the next tab stop (VZ)."""
@@ -343,14 +388,8 @@ class Window:
 
     def _delete_range(self, start: int, end: int) -> str | None:
         """Delete from `start` to `end` in the cursor line, leaving the cursor at `start`."""
-        current = self.lines[self.line]
-        deleted = current[start:end]
         self._go(self.line, start)
-        if not deleted:
-            return None
-        self.lines[self.line] = current[:start] + current[end:]
-        self._touch()
-        return deleted
+        return self._delete_between((self.line, start), (self.line, end)) or None
 
     def delete_word_back(self) -> str | None:
         """Delete back to where the word left command goes. At the line top, as BS."""
@@ -373,3 +412,85 @@ class Window:
 
     def delete_to_line_end(self) -> str | None:
         return self._delete_range(self.index, len(self.lines[self.line]))
+
+    # Blocks
+
+    def start_block(self) -> None:
+        """^B: the block starts at the cursor. It is a line block until the cursor
+        moves along a line (VZ starts with the line kind too)."""
+        self.block = LINE
+        self.marks[BLOCK] = (self.line, self.index)
+
+    def block_range(self) -> tuple[str, Pos, Pos] | None:
+        """The kind, start and end of the block, or None without a block.
+
+        A character block runs from the start point to the cursor. A line block takes
+        the lines from one of them to the line before the other, as both points go to
+        the start of their lines. With the cursor on the line where the block starts,
+        it is a character block.
+        """
+        if self.block is None or BLOCK not in self.marks:
+            return None
+        anchor = self.clamp(self.marks[BLOCK])
+        cursor = (self.line, self.index)
+        if self.block == CHAR or anchor[0] == cursor[0]:
+            start, end = sorted((anchor, cursor))
+            return CHAR, start, end
+        first, last = sorted((anchor[0], cursor[0]))
+        return LINE, (first, 0), (last, 0)
+
+    def jump_block(self) -> bool:
+        """^QB: go to the other end of the block, or of the text pasted last."""
+        if BLOCK not in self.marks:
+            return False
+        other = self.clamp(self.marks[BLOCK])
+        self.marks[BLOCK] = (self.line, self.index)
+        self._go(*other)
+        return True
+
+    def take_line(self, *, delete: bool) -> str:
+        """The cursor line with its line end, deleted if `delete` (^Y without a block).
+
+        On the empty last line, the end of the text, there is nothing to take (VZ).
+        A last line without a line end is taken as a line all the same.
+        """
+        line = self.line
+        current = self.lines[line]
+        if line == len(self.lines) - 1:
+            if not current:
+                return ""
+            end = (line, len(current))
+        else:
+            end = (line + 1, 0)
+        if delete:
+            self._delete_between((line, 0), end)
+            self._go(line, 0)
+        return current + "\n"
+
+    def put(self, kind: str, text: str) -> None:
+        """Insert text from the text stack: lines before the cursor line, characters
+        at the cursor. The cursor stays where the text starts, and the mark of the
+        block goes to where it ends, for ^QB (VZ with Ek-)."""
+        start = (self.line, 0) if kind == LINE else (self.line, self.index)
+        cursor = (self.line, self.index)
+        end = self._insert_at(start, text)
+        self.marks[BLOCK] = end
+        if kind == LINE:
+            self._go(start[0], min(cursor[1], len(self.lines[start[0]])))
+        else:
+            self._go(*start)
+
+    def take_block(self, *, delete: bool) -> tuple[str, str] | None:
+        """The kind and text of the block, deleted if `delete`. The block ends.
+
+        None without a block. The mark of the block stays, for ^QB.
+        """
+        found = self.block_range()
+        self.block = None
+        if found is None:
+            return None
+        kind, start, end = found
+        text = self.text_between(start, end)
+        if delete and text:
+            self._delete_between(start, end)
+        return kind, text

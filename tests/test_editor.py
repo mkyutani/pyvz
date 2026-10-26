@@ -1,37 +1,12 @@
 from pathlib import Path
 
 import pytest
+from fakes import FakeConsole
 
 from pyvz.editor.editor import Editor
 from pyvz.editor.window import Window
 from pyvz.keys.commands import Cmd
 from pyvz.text.document import Document
-
-
-class FakeConsole:
-    """Answers questions, input boxes and menus from a queue, in the order asked."""
-
-    def __init__(self, *answers: object) -> None:
-        self.answers = list(answers)
-        self.questions: list[str] = []
-        self.messages: list[str] = []
-        self.boxes: list[tuple[str, str]] = []  # (title, text shown first)
-        self.menus: list[list[tuple[str, str]]] = []
-
-    def message(self, text: str) -> None:
-        self.messages.append(text)
-
-    def ask(self, question: str) -> bool | None:
-        self.questions.append(question)
-        return self.answers.pop(0)
-
-    def gets(self, title: str, text: str = "", *, kind: str = "") -> str | None:
-        self.boxes.append((title, text))
-        return self.answers.pop(0)
-
-    def menu(self, items, *, title: str = ""):
-        self.menus.append(list(items))
-        return self.answers.pop(0)
 
 
 @pytest.fixture
@@ -195,7 +170,7 @@ def test_closing_one_of_two_texts_keeps_editing(chdir: Path):
     editor.open(chdir / "b")
     editor.run(Cmd.CLOSE)
     assert editor.exit_code is None
-    assert editor.window.lines == ["a"]
+    assert editor.window.lines == ["a", ""]
 
 
 def test_quit_saves_changed_texts_then_asks_to_quit(chdir: Path):
@@ -244,7 +219,7 @@ def test_read_only_text_refuses_edits(chdir: Path):
     editor.run(Cmd.READ_ONLY)
     editor.type("X")
     editor.run(Cmd.BACKSPACE)
-    assert editor.window.lines == ["abc"]
+    assert editor.window.lines == ["abc", ""]
     assert console.messages == ["a.txt はリードオンリーです"] * 2
     assert not editor.save(editor.window)
 
@@ -261,7 +236,7 @@ def test_repeat_runs_the_last_command_again(chdir: Path):
 
 def test_commands_not_there_yet():
     editor = Editor(FakeConsole())
-    assert not editor.run(Cmd.BLOCK)
+    assert not editor.run(Cmd.SET_SEARCH)
 
 
 def test_new_file_message(chdir: Path):

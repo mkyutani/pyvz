@@ -21,6 +21,8 @@ class FileFormat:
     """How the lines of a document are written back to its file."""
 
     newline: str = "\n"
+    # Add a line end on saving when the text does not end with one. For new files; a
+    # file read from disk keeps what it had.
     final_newline: bool = True
     bom: bool = False
 
@@ -31,6 +33,9 @@ def decode(data: bytes) -> tuple[list[str], FileFormat]:
     The line ending is the one most of the file uses. In a file that mostly uses
     CR LF, a line ending with a bare LF is written back with CR LF. In a file that
     mostly uses LF, a CR before LF stays in the line as a character.
+
+    A file that ends with a line end has an empty last line after it, as VZ has a
+    line for the end of the text, where the cursor can go.
     """
     text = data.decode(ENCODING, ERRORS)
     bom = text.startswith(BOM)
@@ -40,17 +45,14 @@ def decode(data: bytes) -> tuple[list[str], FileFormat]:
     newline = "\r\n" if crlf > text.count("\n") - crlf else "\n"
 
     lines = text.split("\n")
-    final_newline = len(lines) > 1 and lines[-1] == ""
-    if final_newline:
-        lines.pop()
     if newline == "\r\n":
         lines = [line.removesuffix("\r") for line in lines]
-    return lines, FileFormat(newline, final_newline, bom)
+    return lines, FileFormat(newline, False, bom)
 
 
 def encode(lines: list[str], fmt: FileFormat) -> bytes:
     text = fmt.newline.join(lines)
-    if fmt.final_newline:
+    if fmt.final_newline and lines[-1] != "":
         text += fmt.newline
     if fmt.bom:
         text = BOM + text

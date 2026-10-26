@@ -10,7 +10,8 @@ from typing import Protocol
 
 from pyvz import history, paths
 from pyvz.editor.layout import Layout
-from pyvz.editor.window import Window
+from pyvz.editor.stack import TextStack
+from pyvz.editor.window import CHAR, LINE, Window
 from pyvz.filer.filer import Insert, Open
 from pyvz.keys.commands import Cmd
 from pyvz.text.document import Document, encode, write_file
@@ -54,6 +55,9 @@ class Prompt(Protocol):
 
 # Commands that change the text, refused for a read-only text.
 _EDITS = {
+    Cmd.CUT,
+    Cmd.PASTE,
+    Cmd.LOAD,
     Cmd.RETURN,
     Cmd.BACKSPACE,
     Cmd.DELETE,
@@ -63,6 +67,16 @@ _EDITS = {
     Cmd.DELETE_TO_LINE_END,
     Cmd.TAB,
 }
+
+# Moving up and down makes a block of characters a block of lines (VZ: CMF_VMOVE),
+# and the line editing commands make it a block of characters again.
+_VERTICAL = {
+    Cmd.UP,
+    Cmd.DOWN,
+    *range(Cmd.ROLL_UP, Cmd.LAST_POSITION + 1),
+    Cmd.JUMP_LINE,
+}
+_ALONG_LINE = {*range(Cmd.LEFT, Cmd.REDRAW_LINE + 1), Cmd.SCREEN_LINE_LEFT, Cmd.SCREEN_LINE_RIGHT}
 
 
 class Editor:
@@ -79,6 +93,7 @@ class Editor:
         # Started from the filer: closing the last text goes back to it (VZ).
         self.keep_open = False
         self.prompt: Prompt | None = None
+        self.stack = TextStack()
         self._last: tuple[int, int | None] | None = None
         self._commands: dict[int, Callable[[int | None], object]] = {
             Cmd.REPEAT: self._repeat,
@@ -113,6 +128,13 @@ class Editor:
             Cmd.WINDOW_END: lambda _: self.window.window_end(),
             Cmd.TEXT_TOP: lambda _: self.window.text_top(),
             Cmd.TEXT_END: lambda _: self.window.text_end(),
+            Cmd.BLOCK: lambda _: self.toggle_block(),
+            Cmd.CUT: lambda _: self.cut(delete=True),
+            Cmd.PASTE: lambda _: self.paste(pop=True),
+            Cmd.STORE: lambda _: self.cut(delete=False),
+            Cmd.LOAD: lambda _: self.paste(pop=False),
+            Cmd.CLEAR_STACK: lambda _: self.clear_stack(),
+            Cmd.BLOCK_JUMP: lambda _: self.window.jump_block(),
             Cmd.READ_ONLY: lambda _: self._toggle_read_only(),
             Cmd.OPEN: lambda _: self.open_command(),
             Cmd.OPEN_READ_ONLY: lambda _: self.open_command(readonly=True),
@@ -191,6 +213,11 @@ class Editor:
             self._last = (command, digit)
         if command in _EDITS and not self._writable():
             return True
+        window = self.window
+        if window.block == CHAR and command in _VERTICAL:
+            window.block = LINE
+        elif window.block == LINE and command in _ALONG_LINE:
+            window.block = CHAR
         action(digit)
         if self.exit_code is None and self.windows:
             self.window.keep_visible()
@@ -201,6 +228,8 @@ class Editor:
         if not self._writable():
             return
         window = self.window
+        if window.block == LINE:
+            window.block = CHAR
         if self.insert_mode or "\n" in text:
             window.insert(text)
         else:
@@ -227,6 +256,40 @@ class Editor:
     def _toggle_read_only(self) -> None:
         doc = self.window.doc
         doc.readonly = not doc.readonly
+
+    # Blocks and the text stack
+
+    def toggle_block(self) -> None:
+        window = self.window
+        if window.block is None:
+            window.start_block()
+        else:
+            window.block = None
+
+    def cut(self, *, delete: bool) -> None:
+        """^Y (delete) and ^KK (store): push the block, or the cursor line, onto the
+        text stack."""
+        window = self.window
+        taken = window.take_block(delete=delete)
+        if taken is None:
+            text = window.take_line(delete=delete)
+            taken = (LINE, text)
+        if taken[1]:
+            self.stack.push(*taken)
+
+    def paste(self, *, pop: bool) -> None:
+        """^J (pop) and ^KC (copy without popping): insert the top of the text stack."""
+        item = self.stack.pop() if pop else self.stack.top()
+        if item is None:
+            self.console.message("テキストスタックは空です")
+            return
+        window = self.window
+        window.block = None
+        window.put(*item)
+
+    def clear_stack(self) -> None:
+        if self.console.ask("テキストスタックを消去します"):
+            self.stack.clear()
 
     # Files
 
@@ -259,6 +322,9 @@ class Editor:
         """
         window = self.window
         doc = window.doc
+        if window.block_range() is not None:
+            self._save_block(window)
+            return
         if doc.readonly:
             self.console.message(f"{self.name(window)} はリードオンリーです")
             return
@@ -272,14 +338,33 @@ class Editor:
             if not self.console.ask(f"{paths.shown(path)} はすでに存在します. 出力します"):
                 return
         if window.cc and not same:
-            try:
-                write_file(path, encode(doc.lines, doc.format))
-            except OSError as e:
-                self._cannot_write(path, e)
-                return
-            self.console.message(f"{paths.shown(path)} に出力しました")
+            self._write_copy(path, doc.lines, doc)
             return
         self.save(window, None if same else path)
+
+    def _save_block(self, window: Window) -> None:
+        """[ESC]S with a block: write the block to a file (VZ). The text stays."""
+        name = self.console.gets("【出力ファイル】", kind=history.FILE)
+        if not name:
+            return
+        path = Path(os.path.expanduser(name))
+        if path.exists() and not self.console.ask(
+            f"{paths.shown(path)} はすでに存在します. 出力します"
+        ):
+            return
+        taken = window.take_block(delete=False)
+        if taken is not None:
+            self._write_copy(path, taken[1].split("\n"), window.doc)
+
+    def _write_copy(self, path: Path, lines: list[str], doc: Document) -> None:
+        """Write lines to a file that is not the text's own, in the text's format."""
+        fmt = replace(doc.format, final_newline=False)
+        try:
+            write_file(path, encode(lines, fmt))
+        except OSError as e:
+            self._cannot_write(path, e)
+            return
+        self.console.message(f"{paths.shown(path)} に出力しました")
 
     def new_file(self) -> None:
         """[ESC]N: a new text, with the name given in 【新規ファイル】."""

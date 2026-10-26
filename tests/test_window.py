@@ -169,6 +169,7 @@ def test_newline_in_overwrite_mode_moves_to_the_next_line():
     assert at(w) == (1, 0)
     w.newline(overwrite=True)
     assert w.lines == ["ab", "cd", ""]
+    assert at(w) == (2, 0)
 
 
 def test_backspace_and_delete_join_lines():

@@ -5,7 +5,7 @@ key labels.
 from __future__ import annotations
 
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from pyvz.editor.editor import Editor
 from pyvz.editor.layout import shown_as
@@ -81,8 +81,14 @@ def _text(screen: Screen, editor: Editor, first: int, rows: int) -> tuple[int, i
     """Draw the rows of the text. Returns where the cursor is on the screen."""
     window = editor.window
     lines = window.lines
-    final_newline = window.doc.format.final_newline
     cursor_pos = window.cursor_row()
+    block = window.block_range()
+
+    def styled(style: Style, line: int, index: int) -> Style:
+        if block is not None and block[1] <= (line, index) < block[2]:
+            return replace(style, reverse=True)
+        return style
+
     cursor = None
     pos = window.top
     y = first
@@ -95,21 +101,18 @@ def _text(screen: Screen, editor: Editor, first: int, rows: int) -> tuple[int, i
             ch = text[i]
             alt = shown_as(ch, folded.widths[i])
             if alt is None:
-                screen.put(y, folded.columns[i], ch)
+                screen.put(y, folded.columns[i], ch, styled(PLAIN, line_no, i))
             else:
-                screen.put(y, folded.columns[i], alt, PLAIN if ch == "\t" else CONTROL)
+                style = PLAIN if ch == "\t" else CONTROL
+                screen.put(y, folded.columns[i], alt, styled(style, line_no, i))
         if pos == cursor_pos:
             cursor = (y, folded.columns[window.index])
         if row == folded.rows - 1:
             column = folded.columns[len(text)]
-            last = line_no == len(lines) - 1
-            if not last or final_newline:
-                screen.put(y, column, LINE_END_MARK, MARK)
-            if last:
-                if not final_newline:
-                    screen.put(y, column, END_MARK, MARK)
-                elif y + 1 < first + rows:
-                    screen.put(y + 1, 0, END_MARK, MARK)
+            if line_no < len(lines) - 1:
+                screen.put(y, column, LINE_END_MARK, styled(MARK, line_no, len(text)))
+            else:
+                screen.put(y, column, END_MARK, MARK)
         following = window.next_row(pos)
         if following is None:
             break

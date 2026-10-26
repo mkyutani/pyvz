@@ -15,8 +15,9 @@ terminal width).
 ## Status
 
 Under development. The editor works on the terminal with VZ's keys for moving,
-typing, opening, saving and closing files, and with Claude Code as below. The filer
-works too. Blocks, the text stack, search and replace, and macros are still to come.
+typing, blocks and the text stack, opening, saving and closing files, and with
+Claude Code as below. The filer works too. Search and replace, undelete, and macros
+are still to come.
 
 ## Usage
 
