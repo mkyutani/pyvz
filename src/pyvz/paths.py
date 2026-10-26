@@ -54,3 +54,21 @@ def ensure_private_dir(path: Path) -> Path:
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.chmod(0o700)
     return path
+
+
+def shown(path: Path, base: Path | None = None) -> str:
+    """How `path` is written for the user to read.
+
+    A path under `base` (the current directory by default) is made relative to it,
+    and a path under the home directory starts with ~. Symbolic links are not
+    resolved, so the path stays the way the user spelled it.
+    """
+    absolute = Path(os.path.abspath(path))
+    base = Path(os.path.abspath(base if base is not None else Path.cwd()))
+    if absolute.is_relative_to(base) and absolute != base:
+        return str(absolute.relative_to(base))
+    home = Path.home()
+    if absolute.is_relative_to(home):
+        rest = absolute.relative_to(home)
+        return "~" if rest == Path(".") else f"~/{rest}"
+    return str(absolute)

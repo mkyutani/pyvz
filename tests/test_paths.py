@@ -44,3 +44,19 @@ def test_private_dir_tightens_existing_permissions(home: Path):
     target.mkdir(mode=0o755)
     paths.ensure_private_dir(target)
     assert stat.S_IMODE(target.stat().st_mode) == 0o700
+
+
+def test_shown_is_relative_under_the_base(home: Path):
+    base = home / "work"
+    assert paths.shown(base / "src/a.py", base) == "src/a.py"
+
+
+def test_shown_uses_tilde_for_home(home: Path):
+    base = home / "work"
+    assert paths.shown(home / "notes/memo.md", base) == "~/notes/memo.md"
+    assert paths.shown(home, base) == "~"
+    assert paths.shown(base, base) == "~/work"
+
+
+def test_shown_is_absolute_elsewhere(home: Path):
+    assert paths.shown(Path("/etc/hosts"), home) == "/etc/hosts"

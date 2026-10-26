@@ -1,3 +1,3 @@
-"""Drawing on the terminal with curses: the editor and filer views, input boxes,
-menus, and the status and message lines.
+"""The terminal side: raw input and output, drawing the editor and the filer, and the
+main loop that reads keys and runs commands.
 """
