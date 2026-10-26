@@ -26,30 +26,30 @@ def run(path: Path, *chunks: bytes | None, cc: bool = False) -> tuple[int, Edito
 
 
 def test_type_save_and_close(text_file: Path):
-    code, _ = run(text_file, b"X", b"\x1b", b"s", b"\x1b", b"c")
+    code, _ = run(text_file, b"X", b"\x1b", b"s", b"\r", b"\x1b", b"c")
     assert code == 0
     assert text_file.read_text() == "Xabc\ndef\n"
 
 
 def test_alt_letter_is_the_same_as_esc_and_the_letter(text_file: Path):
-    code, _ = run(text_file, b"X", b"\x1bs", b"\x1bc")
+    code, _ = run(text_file, b"X", b"\x1bs", b"\r", b"\x1bc")
     assert code == 0
     assert text_file.read_text() == "Xabc\ndef\n"
 
 
 def test_esc_typed_slowly_still_works_as_a_prefix(text_file: Path):
-    code, _ = run(text_file, b"X", b"\x1b", None, b"s", b"\x1b", None, b"c")
+    code, _ = run(text_file, b"X", b"\x1b", None, b"s", b"\r", b"\x1b", None, b"c")
     assert text_file.read_text() == "Xabc\ndef\n"
 
 
 def test_two_stroke_keys_with_ctrl_q(text_file: Path):
     # ^X (down), ^Q D (line end), type, then ^Q ^S (line top, Ctrl held), type.
-    code, editor = run(text_file, b"\x18", b"\x11d", b"!", b"\x11\x13", b"[", b"\x1bs\x1bc")
+    code, editor = run(text_file, b"\x18", b"\x11d", b"!", b"\x11\x13", b"[", b"\x1bs\r\x1bc")
     assert text_file.read_text() == "abc\n[def!\n"
 
 
 def test_esc_esc_repeats_the_last_command(text_file: Path):
-    run(text_file, b"\x04", b"\x1b\x1b", None, b"\x1b\x1b", None, b"!", b"\x1bs\x1bc")
+    run(text_file, b"\x04", b"\x1b\x1b", None, b"\x1b\x1b", None, b"!", b"\x1bs\r\x1bc")
     assert text_file.read_text() == "abc!\ndef\n"
 
 
@@ -66,17 +66,17 @@ def test_close_answered_no(text_file: Path):
 
 
 def test_paste_inserts_the_text(text_file: Path):
-    run(text_file, b"\x1b[200~one\r\ntwo\x1b[201~", b"\x1bs\x1bc")
+    run(text_file, b"\x1b[200~one\r\ntwo\x1b[201~", b"\x1bs\r\x1bc")
     assert text_file.read_text() == "one\ntwoabc\ndef\n"
 
 
 def test_arrow_keys_and_enter(text_file: Path):
-    run(text_file, b"\x1b[B", b"\x1b[C", b"\r", b"\x1bs\x1bc")
+    run(text_file, b"\x1b[B", b"\x1b[C", b"\r", b"\x1bs\r\x1bc")
     assert text_file.read_text() == "abc\nd\nef\n"
 
 
 def test_backspace_from_the_terminal(text_file: Path):
-    run(text_file, b"\x1b[C\x7f", b"\x1bs\x1bc")
+    run(text_file, b"\x1b[C\x7f", b"\x1bs\r\x1bc")
     assert text_file.read_text() == "bc\ndef\n"
 
 

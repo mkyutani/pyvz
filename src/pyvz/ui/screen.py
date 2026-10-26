@@ -68,6 +68,17 @@ def clip(text: str, width: int, *, ambiguous_wide: bool = False) -> str:
     return text
 
 
+def clip_middle(text: str, width: int, *, ambiguous_wide: bool = False) -> str:
+    """`text`, or its start, "…" and its end, to fit in `width` columns."""
+    if text_width(text, ambiguous_wide=ambiguous_wide) <= width:
+        return text
+    if width < 3:
+        return clip(text, width, ambiguous_wide=ambiguous_wide)
+    head = clip(text, width // 2, ambiguous_wide=ambiguous_wide)
+    rest = width - 1 - text_width(head, ambiguous_wide=ambiguous_wide)
+    return head + "…" + clip(text[::-1], rest, ambiguous_wide=ambiguous_wide)[::-1]
+
+
 def clip_start(text: str, width: int, *, ambiguous_wide: bool = False) -> str:
     """`text`, or "…" and the longest end of it that fits in `width` columns."""
     if text_width(text, ambiguous_wide=ambiguous_wide) <= width:

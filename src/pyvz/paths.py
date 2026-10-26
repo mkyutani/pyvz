@@ -67,6 +67,12 @@ def shown(path: Path, base: Path | None = None) -> str:
     base = Path(os.path.abspath(base if base is not None else Path.cwd()))
     if absolute.is_relative_to(base) and absolute != base:
         return str(absolute.relative_to(base))
+    return tilde(absolute)
+
+
+def tilde(path: Path) -> str:
+    """The absolute path, with ~ for the home directory."""
+    absolute = Path(os.path.abspath(path))
     home = Path.home()
     if absolute.is_relative_to(home):
         rest = absolute.relative_to(home)

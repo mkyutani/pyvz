@@ -110,6 +110,8 @@ def default_keymap() -> Keymap:
     # VZ.DEF did these with macros 12, 13, 16 and 17.
     keymap.bind(Cmd.SCREEN_LINE_LEFT, codes.HOME, codes.stroke2(q, "["))
     keymap.bind(Cmd.SCREEN_LINE_RIGHT, codes.END, codes.stroke2(q, "]"))
+    # In the filer, [END] goes to the last file as [HOME] ([CLR]) goes to the first.
+    keymap.bind(Cmd.FILER_TOP_END, codes.END)
     keymap.bind(Cmd.MARK_POSITION, codes.PREFIX_DIGIT | k)  # ^K1-^K4: set a mark
     keymap.bind(Cmd.LAST_POSITION, codes.PREFIX_DIGIT | q)  # ^Q1-^Q4: jump to a mark
     keymap.messages[Cmd.SCREEN_LINE_LEFT] = "画面の左端"

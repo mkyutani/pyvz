@@ -2,25 +2,41 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
-from pyvz import paths
+from pyvz import history, paths
 from pyvz.editor.layout import Layout
 from pyvz.editor.window import Window
+from pyvz.filer.filer import Insert, Open
 from pyvz.keys.commands import Cmd
-from pyvz.text.document import Document
+from pyvz.text.document import Document, encode, write_file
 
 
 class Console(Protocol):
-    """What the editor needs from the screen: messages and Y/N questions."""
+    """What the editor needs from the screen: messages, questions, input and menus."""
 
     def message(self, text: str) -> None: ...
 
     def ask(self, question: str) -> bool | None:
         """Ask "question か？ (Y/N)". True for yes, False for no, None if cancelled."""
+        ...
+
+    def gets(self, title: str, text: str = "", *, kind: str = "") -> str | None:
+        """Read a line in an input box, with the history named `kind`."""
+        ...
+
+    def menu(self, items: list[tuple[str, str]], *, title: str = "") -> int | str | None:
+        """Show (key, label) items. The index of the chosen one, or None."""
+        ...
+
+    def filer(
+        self, start: Path | None = None, *, pattern: str = "*", readonly: bool = False
+    ) -> Open | Insert | None:
+        """Run the filer, at `start` or where it was last time."""
         ...
 
 
@@ -37,7 +53,16 @@ class Prompt(Protocol):
 
 
 # Commands that change the text, refused for a read-only text.
-_EDITS = {Cmd.RETURN, Cmd.BACKSPACE, Cmd.DELETE, Cmd.TAB}
+_EDITS = {
+    Cmd.RETURN,
+    Cmd.BACKSPACE,
+    Cmd.DELETE,
+    Cmd.DELETE_WORD_BACK,
+    Cmd.DELETE_WORD,
+    Cmd.DELETE_TO_LINE_TOP,
+    Cmd.DELETE_TO_LINE_END,
+    Cmd.TAB,
+}
 
 
 class Editor:
@@ -47,9 +72,12 @@ class Editor:
         self.height = 1
         self.windows: list[Window] = []
         self.current = 0
+        self._previous = 0  # the text shown before, for switching back
         self.insert_mode = True
         # Set when the editor is to end, to the exit status of the program.
         self.exit_code: int | None = None
+        # Started from the filer: closing the last text goes back to it (VZ).
+        self.keep_open = False
         self.prompt: Prompt | None = None
         self._last: tuple[int, int | None] | None = None
         self._commands: dict[int, Callable[[int | None], object]] = {
@@ -67,6 +95,10 @@ class Editor:
             Cmd.INSERT_MODE: lambda _: self._toggle_insert(),
             Cmd.BACKSPACE: lambda _: self.window.backspace(),
             Cmd.DELETE: lambda _: self.window.delete(),
+            Cmd.DELETE_WORD_BACK: lambda _: self.window.delete_word_back(),
+            Cmd.DELETE_WORD: lambda _: self.window.delete_word(),
+            Cmd.DELETE_TO_LINE_TOP: lambda _: self.window.delete_to_line_top(),
+            Cmd.DELETE_TO_LINE_END: lambda _: self.window.delete_to_line_end(),
             Cmd.TAB: lambda _: self.window.tab(overwrite=not self.insert_mode),
             Cmd.ROLL_UP: lambda _: self.window.scroll(-1),
             Cmd.ROLL_DOWN: lambda _: self.window.scroll(1),
@@ -82,8 +114,15 @@ class Editor:
             Cmd.TEXT_TOP: lambda _: self.window.text_top(),
             Cmd.TEXT_END: lambda _: self.window.text_end(),
             Cmd.READ_ONLY: lambda _: self._toggle_read_only(),
+            Cmd.OPEN: lambda _: self.open_command(),
+            Cmd.OPEN_READ_ONLY: lambda _: self.open_command(readonly=True),
+            Cmd.CLOSE_OPEN: lambda _: self.close_open(),
+            Cmd.SWITCH_WINDOW: lambda _: self.switch_back(),
+            Cmd.SWITCH_TEXT: lambda _: self.choose_text(),
+            Cmd.NEW_FILE: lambda _: self.new_file(),
             Cmd.CLOSE: lambda _: self.close(),
-            Cmd.SAVE: lambda _: self.save(self.window),
+            Cmd.SAVE: lambda _: self.save_as(),
+            Cmd.RENAME: lambda _: self.rename(),
             Cmd.QUIT: lambda _: self.quit(),
             Cmd.COMMAND_LINE: lambda _: self.hold(),
             Cmd.SCREEN_LINE_LEFT: lambda _: self.window.row_left(),
@@ -106,8 +145,21 @@ class Editor:
         window.layout = self.layout
         window.height = self.height
         self.windows.append(window)
-        self.current = len(self.windows) - 1
+        self.show(len(self.windows) - 1)
         return window
+
+    def show(self, index: int) -> None:
+        if index != self.current:
+            self._previous = self.current
+        self.current = index
+
+    def find(self, path: Path) -> int | None:
+        """The index of the text of a file, if it is open."""
+        target = os.path.abspath(path)
+        for i, window in enumerate(self.windows):
+            if window.doc.path is not None and os.path.abspath(window.doc.path) == target:
+                return i
+        return None
 
     def resize(self, width: int, height: int) -> None:
         """Set the size of the text area of the window."""
@@ -120,7 +172,10 @@ class Editor:
 
     def name(self, window: Window) -> str:
         path = window.doc.path
-        return paths.shown(path) if path is not None else "(無題)"
+        if path is None:
+            return "(無題)"
+        # Claude Code's prompt files are in its temporary directory: the name is enough.
+        return path.name if window.cc else paths.shown(path)
 
     # Keys
 
@@ -175,21 +230,150 @@ class Editor:
 
     # Files
 
-    def save(self, window: Window) -> bool:
+    def save(self, window: Window, path: Path | None = None) -> bool:
+        """Save the text, under `path` if given, which renames it (VZ)."""
         doc = window.doc
         name = self.name(window)
         if doc.readonly:
             self.console.message(f"{name} はリードオンリーです")
             return False
         try:
-            doc.save()
+            doc.save(path)
         except ValueError:
             self.console.message("ファイル名がありません")
             return False
         except OSError as e:
-            self.console.message(f"{name} は出力できません（{e.strerror or e}）")
+            self._cannot_write(path or doc.path, e)
             return False
         return True
+
+    def _cannot_write(self, path: Path | None, error: OSError) -> None:
+        name = paths.shown(path) if path is not None else "(無題)"
+        self.console.message(f"{name} は出力できません（{error.strerror or error}）")
+
+    def save_as(self) -> None:
+        """[ESC]S: save under the name in 【出力ファイル】, the current name to start with.
+
+        For the prompt file of Claude Code, another name writes a copy, and the text
+        stays the prompt.
+        """
+        window = self.window
+        doc = window.doc
+        if doc.readonly:
+            self.console.message(f"{self.name(window)} はリードオンリーです")
+            return
+        current = self.name(window) if doc.path is not None else ""
+        name = self.console.gets("【出力ファイル】", current, kind=history.FILE)
+        if not name:
+            return
+        path = Path(os.path.expanduser(name))
+        same = doc.path is not None and os.path.abspath(path) == os.path.abspath(doc.path)
+        if not same and path.exists():
+            if not self.console.ask(f"{paths.shown(path)} はすでに存在します. 出力します"):
+                return
+        if window.cc and not same:
+            try:
+                write_file(path, encode(doc.lines, doc.format))
+            except OSError as e:
+                self._cannot_write(path, e)
+                return
+            self.console.message(f"{paths.shown(path)} に出力しました")
+            return
+        self.save(window, None if same else path)
+
+    def new_file(self) -> None:
+        """[ESC]N: a new text, with the name given in 【新規ファイル】."""
+        name = self.console.gets("【新規ファイル】", kind=history.FILE)
+        if not name:
+            return
+        self.open_file(Path(os.path.expanduser(name)))
+
+    def open_file(self, path: Path, *, readonly: bool = False) -> None:
+        """Show the text of a file, opening it unless it is open already."""
+        found = self.find(path)
+        if found is not None:
+            self.show(found)
+            self.console.message(f"{self.name(self.window)} はオープンされています")
+            return
+        if path.is_dir():
+            self.console.message(f"{paths.shown(path)} はディレクトリです")
+            return
+        try:
+            self.open(path, readonly=readonly)
+        except OSError as e:
+            self.console.message(f"{paths.shown(path)} は入力できません（{e.strerror or e}）")
+
+    def open_command(self, *, readonly: bool = False) -> None:
+        """[ESC]O, [ESC]R: open the file named in 【入力ファイル】.
+
+        Enter alone opens the filer, as does a directory or a pattern such as *.md.
+        """
+        name = self.console.gets("【入力ファイル】", kind=history.FILE)
+        if name is not None:
+            self.open_name(name, readonly=readonly)
+
+    def open_name(self, name: str, *, readonly: bool = False) -> None:
+        name = name.strip()
+        if not name:
+            self.take(self.console.filer(readonly=readonly))
+            return
+        path = Path(os.path.expanduser(name))
+        if any(ch in path.name for ch in "*?["):
+            self.take(self.console.filer(path.parent, pattern=path.name, readonly=readonly))
+        elif path.is_dir():
+            self.take(self.console.filer(path, readonly=readonly))
+        else:
+            self.open_file(path, readonly=readonly)
+
+    def take(self, result: Open | Insert | None) -> None:
+        """Do what the filer ended with."""
+        if isinstance(result, Open):
+            for path in result.paths:
+                self.open_file(path, readonly=result.readonly)
+        elif isinstance(result, Insert):
+            if self.windows:
+                self.type(result.text)
+            else:
+                self.console.message("挿入先のテキストがありません")
+
+    def close_open(self) -> None:
+        """[ESC]L: open another file in place of this text."""
+        old = self.window
+        if old.cc:
+            self.console.message("変更できません")
+            return
+        self.open_command()
+        if old in self.windows and self.window is not old:
+            self._close_text(old)
+
+    def rename(self) -> None:
+        """[ESC]P: change the file name of the text. It is written on the next save."""
+        window = self.window
+        if window.cc:
+            self.console.message("変更できません")
+            return
+        current = self.name(window) if window.doc.path is not None else ""
+        name = self.console.gets("【ファイル名】", current, kind=history.FILE)
+        if not name or name == current:
+            return
+        window.doc.path = Path(os.path.expanduser(name))
+        window.doc.modified = True
+
+    def switch_back(self) -> None:
+        """Show the text shown before. VZ switches split windows with this key."""
+        if len(self.windows) > 1:
+            self.show(self._previous if self._previous < len(self.windows) else 0)
+
+    def choose_text(self) -> None:
+        """@T: choose the text to show from 【編集テキスト】."""
+        keys = "123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        items = []
+        for i, window in enumerate(self.windows[: len(keys)]):
+            marks = (" (CC)" if window.cc else "") + (" *" if window.doc.modified else "")
+            items.append((keys[i], self.name(window) + marks))
+        chosen = self.console.menu(items, title="【編集テキスト】")
+        if isinstance(chosen, int):
+            self.show(chosen)
 
     def close(self) -> None:
         """Close the text, asking whether to save it if it was changed.
@@ -202,20 +386,28 @@ class Editor:
             if self._save_others() and self._pass(window):
                 self.exit_code = 0
             return
+        self._close_text(window)
+
+    def _close_text(self, window: Window) -> bool:
+        """Close a text, asking whether to save it if it was changed."""
         if window.doc.modified:
             answer = self.console.ask(f"{self.name(window)} を出力します")
             if answer is None or (answer and not self.save(window)):
-                return
+                return False
         self._remove(window)
+        return True
 
     def _remove(self, window: Window) -> None:
         index = self.windows.index(window)
         del self.windows[index]
         if not self.windows:
-            self.exit_code = 0
+            if not self.keep_open:
+                self.exit_code = 0
             return
-        if self.current >= index:
-            self.current = max(self.current - 1, 0)
+        # Back to the text shown before, as when a peeked file is closed.
+        before = self._previous if self._previous != index else self.current
+        self.current = min(before - (before > index), len(self.windows) - 1)
+        self._previous = self.current
 
     def _changed_files(self) -> list[Window]:
         """Changed texts other than the prompt file of Claude Code."""

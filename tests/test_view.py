@@ -65,7 +65,7 @@ def test_status_marks_and_position():
     editor.window.doc.modified = True
     editor.window.index = 2
     view.draw(screen, editor, view.Overlay())
-    assert screen.text(0).startswith(" 1 /x/a.txt (CC) *")
+    assert screen.text(0).startswith(" 1 a.txt (CC) *")  # the prompt file: its name only
     assert screen.text(0).rstrip().endswith("1:3")
 
 

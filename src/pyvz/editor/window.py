@@ -340,3 +340,36 @@ class Window:
         row = folded.row_of(self.index)
         column = next_tab_stop(self.cursor_column(), self.layout.tab_size)
         self._go(self.line, folded.index_at(row, column))
+
+    def _delete_range(self, start: int, end: int) -> str | None:
+        """Delete from `start` to `end` in the cursor line, leaving the cursor at `start`."""
+        current = self.lines[self.line]
+        deleted = current[start:end]
+        self._go(self.line, start)
+        if not deleted:
+            return None
+        self.lines[self.line] = current[:start] + current[end:]
+        self._touch()
+        return deleted
+
+    def delete_word_back(self) -> str | None:
+        """Delete back to where the word left command goes. At the line top, as BS."""
+        if self.index == 0:
+            return self.backspace()
+        end = self.index
+        self.word_left()
+        return self._delete_range(self.index, end)
+
+    def delete_word(self) -> str | None:
+        """Delete up to where the word right command goes. At the line end, as DEL."""
+        if self.index == len(self.lines[self.line]):
+            return self.delete()
+        start = self.index
+        self.word_right()
+        return self._delete_range(start, self.index)
+
+    def delete_to_line_top(self) -> str | None:
+        return self._delete_range(0, self.index)
+
+    def delete_to_line_end(self) -> str | None:
+        return self._delete_range(self.index, len(self.lines[self.line]))

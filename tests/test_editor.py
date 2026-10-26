@@ -9,16 +9,28 @@ from pyvz.text.document import Document
 
 
 class FakeConsole:
-    def __init__(self, *answers: bool | None) -> None:
+    """Answers questions, input boxes and menus from a queue, in the order asked."""
+
+    def __init__(self, *answers: object) -> None:
         self.answers = list(answers)
         self.questions: list[str] = []
         self.messages: list[str] = []
+        self.boxes: list[tuple[str, str]] = []  # (title, text shown first)
+        self.menus: list[list[tuple[str, str]]] = []
 
     def message(self, text: str) -> None:
         self.messages.append(text)
 
     def ask(self, question: str) -> bool | None:
         self.questions.append(question)
+        return self.answers.pop(0)
+
+    def gets(self, title: str, text: str = "", *, kind: str = "") -> str | None:
+        self.boxes.append((title, text))
+        return self.answers.pop(0)
+
+    def menu(self, items, *, title: str = ""):
+        self.menus.append(list(items))
         return self.answers.pop(0)
 
 
@@ -39,14 +51,89 @@ def editor_with(path: Path, *answers: bool | None, cc: bool = False):
 def test_typing_and_saving(chdir: Path):
     path = chdir / "a.txt"
     path.write_text("abc\n")
-    editor, _ = editor_with(path)
+    editor, console = editor_with(path, "a.txt")
     editor.type("X")
     editor.run(Cmd.LINE_END)
     editor.run(Cmd.RETURN)
     editor.type("de")
     assert editor.run(Cmd.SAVE)
+    assert console.boxes == [("【出力ファイル】", "a.txt")]
     assert path.read_text() == "Xabc\nde\n"
     assert not editor.window.doc.modified
+
+
+def test_save_under_another_name_renames_the_text(chdir: Path):
+    path = chdir / "a.txt"
+    path.write_text("abc\n")
+    editor, _ = editor_with(path, "b.txt")
+    editor.run(Cmd.SAVE)
+    assert (chdir / "b.txt").read_text() == "abc\n"
+    assert editor.name(editor.window) == "b.txt"
+
+
+def test_save_over_another_file_asks(chdir: Path):
+    (chdir / "a.txt").write_text("a\n")
+    (chdir / "b.txt").write_text("b\n")
+    editor, console = editor_with(chdir / "a.txt", "b.txt", False)
+    editor.run(Cmd.SAVE)
+    assert console.questions == ["b.txt はすでに存在します. 出力します"]
+    assert (chdir / "b.txt").read_text() == "b\n"
+
+
+def test_save_of_the_cc_prompt_under_another_name_writes_a_copy(chdir: Path):
+    prompt = chdir / "claude-prompt-1.md"
+    prompt.write_text("memo")
+    editor, console = editor_with(prompt, "notes.md", cc=True)
+    editor.run(Cmd.SAVE)
+    assert (chdir / "notes.md").read_text() == "memo"
+    assert editor.window.doc.path == prompt
+    assert console.messages == ["notes.md に出力しました"]
+
+
+def test_new_file_and_switching_texts(chdir: Path):
+    (chdir / "a.txt").write_text("a\n")
+    editor, console = editor_with(chdir / "a.txt", "b.txt", 0)
+    editor.run(Cmd.NEW_FILE)
+    assert editor.name(editor.window) == "b.txt"
+    assert editor.window.doc.new_file
+    editor.run(Cmd.SWITCH_TEXT)
+    assert console.menus == [[("1", "a.txt"), ("2", "b.txt")]]
+    assert editor.name(editor.window) == "a.txt"
+    editor.run(Cmd.SWITCH_WINDOW)  # back to the text shown before
+    assert editor.name(editor.window) == "b.txt"
+
+
+def test_opening_an_open_file_shows_it(chdir: Path):
+    (chdir / "a.txt").write_text("a\n")
+    (chdir / "b.txt").write_text("b\n")
+    editor, console = editor_with(chdir / "a.txt")
+    editor.open_file(chdir / "b.txt")
+    editor.open_file(chdir / "a.txt")
+    assert len(editor.windows) == 2
+    assert editor.current == 0
+    assert console.messages[-1] == "a.txt はオープンされています"
+
+
+def test_closing_a_text_goes_back_to_the_one_shown_before(chdir: Path):
+    for name in "abc":
+        (chdir / name).write_text(name)
+    editor, _ = editor_with(chdir / "a")
+    editor.open_file(chdir / "b")
+    editor.open_file(chdir / "c")
+    editor.show(0)
+    editor.show(2)
+    editor.run(Cmd.CLOSE)
+    assert editor.name(editor.window) == "a"
+
+
+def test_rename(chdir: Path):
+    path = chdir / "a.txt"
+    path.write_text("abc\n")
+    editor, _ = editor_with(path, "c.txt")
+    editor.run(Cmd.RENAME)
+    assert editor.name(editor.window) == "c.txt"
+    assert editor.window.doc.modified
+    assert not (chdir / "c.txt").exists()
 
 
 def test_overwrite_mode():

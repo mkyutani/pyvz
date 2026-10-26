@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from pyvz.editor.editor import Editor
 from pyvz.editor.layout import shown_as
-from pyvz.ui.screen import PLAIN, Screen, Style, clip, clip_start, text_width
+from pyvz.ui.screen import PLAIN, Screen, Style, clip, clip_middle, clip_start, text_width
 
 STATUS = Style(reverse=True)
 CONTROL = Style(fg=6)  # control characters and bytes that are not UTF-8
@@ -51,7 +51,7 @@ def draw(screen: Screen, editor: Editor, overlay: Overlay) -> None:
         cursor = _text(screen, editor, 1, rows)
     else:
         cursor = None
-    end = _message(screen, overlay, rows + 1)
+    end = draw_message(screen, overlay, rows + 1)
     _function_keys(screen, rows + 2)
     screen.cursor = (rows + 1, end) if overlay.question else cursor
 
@@ -118,14 +118,17 @@ def _text(screen: Screen, editor: Editor, first: int, rows: int) -> tuple[int, i
     return cursor
 
 
-def _message(screen: Screen, overlay: Overlay, row: int) -> int:
+def draw_message(screen: Screen, overlay: Overlay, row: int) -> int:
     """Draw the message line. Returns the column after the text.
 
-    A long message keeps its end, where a question asks (Y/N), and a column is left
-    for the cursor after it.
+    A long question keeps its end, where it asks (Y/N), and a long message its start
+    and end, around a long path. A column is left for the cursor.
     """
-    text = overlay.question or overlay.prefix or overlay.message
-    text = clip_start(text, screen.width - 1, ambiguous_wide=screen.ambiguous_wide)
+    width, wide = screen.width - 1, screen.ambiguous_wide
+    if overlay.question:
+        text = clip_start(overlay.question, width, ambiguous_wide=wide)
+    else:
+        text = clip_middle(overlay.prefix or overlay.message, width, ambiguous_wide=wide)
     return screen.put(row, 0, text, MESSAGE)
 
 

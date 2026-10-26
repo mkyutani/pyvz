@@ -202,3 +202,25 @@ def test_tab_in_overwrite_mode_moves_to_the_next_stop():
     w.index = 0
     w.tab()
     assert w.lines[0] == "\tabcdefghij"
+
+
+def test_delete_words_and_line_parts():
+    w = window("hello  world.txt", width=40)
+    w.index = 7
+    assert w.delete_word() == "world."  # up to where the word right command stops
+    assert w.lines == ["hello  txt"]
+    assert w.delete_word_back() == "hello  "
+    assert (w.lines, w.index) == (["txt"], 0)
+    w.index = 1
+    assert w.delete_to_line_end() == "xt"
+    assert w.delete_to_line_top() == "t"
+    assert w.delete_to_line_top() is None
+
+
+def test_delete_words_join_lines_at_the_ends():
+    w = window("ab", "cd", width=40)
+    w.index = 2
+    assert w.delete_word() == "\n"
+    assert w.lines == ["abcd"]
+    w.index = 0
+    assert w.delete_word_back() is None

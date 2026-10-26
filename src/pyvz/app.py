@@ -15,9 +15,6 @@ from pyvz.ui.tty import Terminal
 
 
 def run(launch: Launch) -> int:
-    if launch.mode == Mode.FILER:
-        print("pyvz: the filer is not implemented yet", file=sys.stderr)
-        return 1
     try:
         terminal = Terminal()
         with terminal:
@@ -26,9 +23,12 @@ def run(launch: Launch) -> int:
             loop.editor = editor
             if launch.mode == Mode.CC:
                 return _run_prompt(loop, editor, PromptFile(launch.files[0], session.current()))
+            if launch.mode == Mode.FILER:
+                editor.keep_open = True
+                return loop.run(launch.directory)
             for path in launch.files:
                 editor.open(path)
-            editor.current = 0
+            editor.show(0)
             return loop.run()
     except OSError as e:
         print(f"pyvz: {e}", file=sys.stderr)
