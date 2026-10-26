@@ -81,14 +81,14 @@ def test_backspace_from_the_terminal(text_file: Path):
 
 
 def test_command_not_there_yet_shows_its_name(text_file: Path):
-    terminal = FakeTerminal(b"\x11f")  # ^QF: set the search string
+    terminal = FakeTerminal(b"\x11k")  # ^QK: the matching bracket
     loop = Loop(terminal, default_keymap())
     editor = Editor(loop)
     loop.editor = editor
     editor.open(text_file)
     with pytest.raises(AssertionError):
         loop.run()
-    assert loop.overlay.message == "検索文字列の設定: まだありません"
+    assert loop.overlay.message == "対応する()[]{}<>: まだありません"
 
 
 def test_cc_prompt_goes_back_with_esc_c(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

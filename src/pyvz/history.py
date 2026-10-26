@@ -17,6 +17,8 @@ LIMIT = 50  # entries kept of each kind
 
 FILE = "file"
 COPY = "copy"
+SEARCH = "search"
+REPLACE = "replace"
 
 
 class History:

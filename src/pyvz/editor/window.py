@@ -41,6 +41,7 @@ class Window:
         self.marks: dict[str, Pos] = {}
         self.block: str | None = None  # LINE or CHAR while marking a block
         self.deleted: Deleted | None = None  # where deletions go for ^U, shared
+        self.found: tuple[Pos, Pos] | None = None  # a match shown while asking about it
         # The cursor line as it was before the edits made in it since the cursor came
         # to it, with the modified flag then: VZ's line buffer, which ^QL drops.
         self._line_before: tuple[int, str, bool] | None = None
@@ -210,6 +211,9 @@ class Window:
             i -= 1
         self._go(self.line, i)
         return True
+
+    def go_to(self, pos: Pos) -> None:
+        self._go(*self.clamp(pos))
 
     def line_top(self) -> None:
         self._go(self.line, 0)
@@ -446,6 +450,25 @@ class Window:
         """Delete from `start` to `end` in the cursor line, leaving the cursor at `start`."""
         self._go(self.line, start)
         return self._erase((self.line, start), (self.line, end), back=back)
+
+    def replace_between(self, start: Pos, end: Pos, text: str) -> Pos:
+        """Put `text` in place of what is between `start` and `end`. Returns its end."""
+        self._delete_between(start, end)
+        return self._insert_at(start, text)
+
+    def insert_line(self) -> None:
+        """^N: a new line above the cursor line, with its indent (VZ)."""
+        current = self.lines[self.line]
+        indent = current[: len(current) - len(current.lstrip(" \t"))]
+        line = self.line
+        self._insert_at((line, 0), indent + "\n")
+        self._go(line, len(indent))
+
+    def same_class_end(self) -> int:
+        """Where the run of characters of one class from the cursor ends."""
+        if self.index >= len(self.lines[self.line]):
+            return self.index
+        return self._same_class_run(1)
 
     def _same_class_run(self, step: int) -> int:
         """Where the run of characters of the class next to the cursor ends."""

@@ -141,6 +141,9 @@ class Loop:
         finally:
             self.layers.remove(box)
 
+    def remember(self, kind: str, text: str) -> None:
+        self.history.add(kind, text)
+
     def menu(
         self,
         items: list[Item] | list[tuple[str, str]],

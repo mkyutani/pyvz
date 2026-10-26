@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +11,14 @@ from typing import Protocol
 
 from pyvz import history, paths
 from pyvz.editor.layout import Layout
+from pyvz.editor.search import (
+    Finder,
+    Options,
+    Pattern,
+    compile_search,
+    literal,
+    unescape_replacement,
+)
 from pyvz.editor.stack import Deleted, TextStack
 from pyvz.editor.window import CHAR, LINE, Window
 from pyvz.filer.filer import Insert, Open
@@ -40,6 +49,10 @@ class Console(Protocol):
         """Run the filer, at `start` or where it was last time."""
         ...
 
+    def remember(self, kind: str, text: str) -> None:
+        """Put text in the history named `kind`, as if typed into an input box."""
+        ...
+
 
 class Prompt(Protocol):
     """The prompt file of Claude Code, which can be put on hold as a draft."""
@@ -55,6 +68,10 @@ class Prompt(Protocol):
 
 # Commands that change the text, refused for a read-only text.
 _EDITS = {
+    Cmd.INSERT_LINE,
+    Cmd.REPLACE,
+    Cmd.REPLACE_AGAIN,
+    Cmd.COPY_STRING,
     Cmd.UNDELETE,
     Cmd.CANCEL_LINE,
     Cmd.CUT,
@@ -97,6 +114,13 @@ class Editor:
         self.prompt: Prompt | None = None
         self.stack = TextStack()
         self.deleted = Deleted()  # for ^U, shared by the texts and the input boxes
+        # Search: the string as typed, the options it starts with (VZ: Ew, Ec, ZH, RX),
+        # and the paging mode, P (by screens) or S (^R and ^C search).
+        self.search: str | None = None
+        self.search_options = Options()
+        self.paging = "P"
+        self._pattern: Pattern | None = None
+        self._replace: tuple[Pattern, str, str, bool] | None = None
         self._last: tuple[int, int | None] | None = None
         self._commands: dict[int, Callable[[int | None], object]] = {
             Cmd.REPEAT: self._repeat,
@@ -123,8 +147,15 @@ class Editor:
             Cmd.ROLL_DOWN: lambda _: self.window.scroll(1),
             Cmd.ROLL_UP2: lambda _: self.window.scroll(-2),
             Cmd.ROLL_DOWN2: lambda _: self.window.scroll(2),
-            Cmd.PAGE_UP: lambda _: self.window.scroll(-self._page()),
-            Cmd.PAGE_DOWN: lambda _: self.window.scroll(self._page()),
+            Cmd.PAGING_MODE: lambda _: self.toggle_paging(),
+            Cmd.PAGE_UP: lambda _: self.page(-1),
+            Cmd.PAGE_DOWN: lambda _: self.page(1),
+            Cmd.COPY_STRING: lambda _: self.copy_string(),
+            Cmd.INSERT_LINE: lambda _: self.window.insert_line(),
+            Cmd.SET_SEARCH: lambda _: self.set_search(),
+            Cmd.GET_WORD: lambda _: self.get_word(),
+            Cmd.REPLACE: lambda _: self.replace(),
+            Cmd.REPLACE_AGAIN: lambda _: self.replace_again(),
             # VZ scrolls smoothly until a key is pressed. pyvz scrolls a row.
             Cmd.SMOOTH_UP: lambda _: self.window.scroll(-1),
             Cmd.SMOOTH_DOWN: lambda _: self.window.scroll(1),
@@ -263,6 +294,204 @@ class Editor:
     def _toggle_read_only(self) -> None:
         doc = self.window.doc
         doc.readonly = not doc.readonly
+
+    # Search and replace
+
+    def _search_title(self) -> str:
+        letters = self.search_options.letters()
+        return "【検索文字列】" + (f" <OPT:{letters}>" if letters else "")
+
+    def _use_search(self, text: str) -> bool:
+        try:
+            self._pattern = compile_search(text, self.search_options)
+        except ValueError as e:
+            self.console.message(str(e))
+            return False
+        self.search = text
+        self.paging = "S"
+        self.console.message(text)  # VZ shows the search string
+        return True
+
+    def set_search(self) -> None:
+        """^QF: set the search string. ^R and ^C then search backward and forward."""
+        text = self.console.gets(self._search_title(), self.search or "", kind=history.SEARCH)
+        if not text:
+            self.paging = "P"
+            self._pattern = None
+            return
+        self._use_search(text)
+
+    def get_word(self) -> None:
+        """^L: the word at the cursor, or the block, becomes the search string."""
+        window = self.window
+        found = window.block_range()
+        if found is not None and found[0] == CHAR and found[1] != found[2]:
+            text = window.text_between(found[1], found[2])
+            window.block = None
+        else:
+            end = window.same_class_end()
+            text = window.lines[window.line][window.index : end]
+        if not text:
+            return
+        text = literal(text)
+        self.console.remember(history.SEARCH, text)
+        self._use_search(text)
+
+    def toggle_paging(self) -> None:
+        """^@: P (page by screens) and S (search with ^R and ^C)."""
+        if self.paging == "S":
+            self.paging = "P"
+        elif self._pattern is not None and self.search is not None:
+            self.paging = "S"
+            self.console.message(self.search)
+
+    def page(self, direction: int) -> None:
+        if self.paging == "S" and self._pattern is not None:
+            self.search_next(backward=direction < 0)
+        else:
+            self.window.scroll(direction * self._page())
+
+    def search_next(self, *, backward: bool) -> bool:
+        """Go to the next match of the search string (VZ: ^R and ^C in S mode)."""
+        window = self.window
+        if self._pattern is None:
+            return False
+        finder = Finder(window.lines)
+        here = (window.line, window.index)
+        if backward:
+            m = finder.backward(self._pattern, here)
+        else:
+            m = finder.forward(self._pattern, here)
+        if m is None:
+            self.console.message("文字列が見つかりません")
+            return False
+        window.go_to(finder.pos(m.start()))
+        return True
+
+    def copy_string(self) -> None:
+        """^QI: type a string, the search string to start with, from 【複写文字列】."""
+        text = self.console.gets("【複写文字列】", self.search or "", kind=history.SEARCH)
+        if text:
+            self.type(text)
+
+    def replace(self) -> None:
+        """^QA: replace, in the block or a range chosen from a menu, all at once or
+        asking about each (VZ)."""
+        window = self.window
+        while True:
+            text = self.console.gets(self._search_title(), self.search or "", kind=history.SEARCH)
+            if not text:
+                return
+            try:
+                pattern = compile_search(text, self.search_options)
+            except ValueError as e:
+                self.console.message(str(e))
+                return
+            replacement = self.console.gets("【置換文字列】", kind=history.REPLACE)
+            if replacement is not None:
+                break  # ESC goes back to the search string
+        self.search, self._pattern = text, pattern
+        if window.block_range() is not None:
+            scope = "block"
+        else:
+            items = [("A", "テキスト全体"), ("F", "カーソル以降"), ("B", "カーソル以前")]
+            chosen = self.console.menu(items, title="【置換範囲】")
+            if not isinstance(chosen, int):
+                return
+            scope = "AFB"[chosen]
+        at_once = self.console.ask("全部一度に置換します")
+        if at_once is None:
+            return
+        self._replace = (pattern, replacement, scope, at_once)
+        self._run_replace()
+
+    def replace_again(self) -> None:
+        """^QO: the last replace again, from where the cursor is now."""
+        if self._replace is None:
+            self.replace()
+        else:
+            self._run_replace()
+
+    def _scope(self, scope: str) -> tuple[tuple[int, int], tuple[int, int]] | None:
+        window = self.window
+        cursor = (window.line, window.index)
+        end_of_text = (len(window.lines) - 1, len(window.lines[-1]))
+        if scope == "block":
+            found = window.block_range()
+            return (found[1], found[2]) if found is not None else None
+        if scope == "F":
+            return cursor, end_of_text
+        if scope == "B":
+            return (0, 0), cursor
+        return (0, 0), end_of_text
+
+    def _replacement(self, pattern: Pattern, replacement: str, m) -> str:
+        if pattern.options.regex:
+            return m.expand(replacement)
+        return unescape_replacement(replacement)
+
+    def _run_replace(self) -> None:
+        assert self._replace is not None
+        pattern, replacement, scope, at_once = self._replace
+        window = self.window
+        found_scope = self._scope(scope)
+        if found_scope is None:
+            return
+        finder = Finder(window.lines)
+        start, end = finder.offset(found_scope[0]), finder.offset(found_scope[1])
+        count = 0
+        try:
+            if at_once:
+                count = self._replace_all(pattern, replacement, finder, start, end)
+            else:
+                count = self._replace_asking(pattern, replacement, start, end)
+        except (re.error, IndexError) as e:
+            self.console.message(f"置換文字列の誤り: {e}")
+            return
+        finally:
+            window.found = None
+        self.console.message(f"{count} 個の文字列を置換しました")
+
+    def _replace_all(self, pattern, replacement, finder: Finder, start: int, end: int) -> int:
+        chosen, last_end = [], start
+        for m in finder.matches(pattern, start):
+            if m.end() > end:
+                break
+            if m.start() >= last_end:
+                chosen.append(m)
+                last_end = m.end()
+        window = self.window
+        # From the end, so that the offsets of the matches before stay right.
+        for m in reversed(chosen):
+            text = self._replacement(pattern, replacement, m)
+            window.replace_between(finder.pos(m.start()), finder.pos(m.end()), text)
+        return len(chosen)
+
+    def _replace_asking(self, pattern, replacement, start: int, end: int) -> int:
+        window = self.window
+        count, offset = 0, start
+        while True:
+            finder = Finder(window.lines)
+            m = next(finder.matches(pattern, offset), None)
+            if m is None or m.end() > end:
+                return count
+            first, last = finder.pos(m.start()), finder.pos(m.end())
+            window.go_to(first)
+            window.found = (first, last)
+            window.keep_visible()
+            answer = self.console.ask("置換します")
+            window.found = None
+            if answer is None:
+                return count
+            if not answer:
+                offset = m.start() + 1
+                continue
+            text = self._replacement(pattern, replacement, m)
+            window.replace_between(first, last, text)
+            window.go_to(first)
+            count += 1
+            end += len(text) - (m.end() - m.start())
+            offset = m.start() + len(text)
 
     # Blocks and the text stack
 

@@ -64,7 +64,8 @@ def _status(screen: Screen, editor: Editor) -> None:
     marks += " *" if doc.modified else ""
     folded = window.folded(window.line)
     column = sum(folded.widths[: window.index]) + 1
-    flags = ("R " if doc.readonly else "") + "P " + ("挿入" if editor.insert_mode else "上書")
+    flags = ("R " if doc.readonly else "") + editor.paging + " "
+    flags += "挿入" if editor.insert_mode else "上書"
     right = f"{flags} {window.line + 1:>5}:{column:<3}"
     wide = screen.ambiguous_wide
     right_width = text_width(right, ambiguous_wide=wide)
@@ -83,9 +84,12 @@ def _text(screen: Screen, editor: Editor, first: int, rows: int) -> tuple[int, i
     lines = window.lines
     cursor_pos = window.cursor_row()
     block = window.block_range()
+    marked = [(b[1], b[2]) for b in [block] if b is not None]
+    if window.found is not None:
+        marked.append(window.found)
 
     def styled(style: Style, line: int, index: int) -> Style:
-        if block is not None and block[1] <= (line, index) < block[2]:
+        if any(start <= (line, index) < end for start, end in marked):
             return replace(style, reverse=True)
         return style
 

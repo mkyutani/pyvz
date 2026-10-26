@@ -40,6 +40,7 @@ class FakeConsole:
         self.messages: list[str] = []
         self.boxes: list[tuple[str, str]] = []  # (title, text shown first)
         self.menus: list[list[tuple[str, str]]] = []
+        self.remembered: list[tuple[str, str]] = []
 
     def message(self, text: str) -> None:
         self.messages.append(text)
@@ -55,3 +56,6 @@ class FakeConsole:
     def menu(self, items, *, title: str = ""):
         self.menus.append(list(items))
         return self.answers.pop(0)
+
+    def remember(self, kind: str, text: str) -> None:
+        self.remembered.append((kind, text))
