@@ -10,6 +10,7 @@ counts the rows that a long line is folded into.
 from __future__ import annotations
 
 from pyvz.editor.layout import Folded, Layout
+from pyvz.editor.stack import Deleted
 from pyvz.text import chartype
 from pyvz.text.document import Document
 from pyvz.text.width import next_tab_stop
@@ -39,6 +40,10 @@ class Window:
         # start of a block.
         self.marks: dict[str, Pos] = {}
         self.block: str | None = None  # LINE or CHAR while marking a block
+        self.deleted: Deleted | None = None  # where deletions go for ^U, shared
+        # The cursor line as it was before the edits made in it since the cursor came
+        # to it, with the modified flag then: VZ's line buffer, which ^QL drops.
+        self._line_before: tuple[int, str, bool] | None = None
 
     @property
     def lines(self) -> list[str]:
@@ -278,6 +283,7 @@ class Window:
         """Insert text at `pos`. Returns the end of it. Positions at `pos` or after it
         (the cursor among them) move past the text."""
         line, index = pos
+        self._remember_line(line, within=len(text.split("\n")) == 1)
         current = self.lines[line]
         parts = text.split("\n")
         if len(parts) == 1:
@@ -304,6 +310,7 @@ class Window:
         """Delete from `start` to `end`. Positions inside go to `start`."""
         text = self.text_between(start, end)
         (l1, i1), (l2, i2) = start, end
+        self._remember_line(l1, within=l1 == l2)
         self.lines[l1 : l2 + 1] = [self.lines[l1][:i1] + self.lines[l2][i2:]]
 
         def moved(p: Pos) -> Pos:
@@ -325,6 +332,33 @@ class Window:
         self.want = None
         for name, pos in self.marks.items():
             self.marks[name] = moved(pos)
+
+    def _remember_line(self, line: int, *, within: bool) -> None:
+        """Before a change: keep the line for ^QL. A change across lines writes the
+        line back in VZ, so there is nothing to go back to after it."""
+        if not within:
+            self._line_before = None
+        elif self._line_before is None or self._line_before[0] != line:
+            self._line_before = (line, self.lines[line], self.doc.modified)
+
+    def left_line(self) -> None:
+        """The cursor may have moved: forget the line kept for ^QL if it did."""
+        if self._line_before is not None and self._line_before[0] != self.line:
+            self._line_before = None
+
+    def cancel_line(self) -> bool:
+        """^QL: put the cursor line back as it was when the cursor came to it."""
+        kept = self._line_before
+        if kept is None or kept[0] != self.line:
+            return False
+        line, text, modified = kept
+        index = self.index
+        self._delete_between((line, 0), (line, len(self.lines[line])))
+        self._insert_at((line, 0), text)
+        self._go(line, min(index, len(text)))
+        self._line_before = None
+        self.doc.modified = modified
+        return True
 
     def clamp(self, pos: Pos) -> Pos:
         line = max(0, min(pos[0], len(self.lines) - 1))
@@ -355,26 +389,48 @@ class Window:
         indent = head[: len(head) - len(head.lstrip(" \t"))]
         self.insert("\n" + indent)
 
+    def _erase(self, start: Pos, end: Pos, *, back: bool) -> str | None:
+        """Delete as the delete commands do: what goes is kept for ^U."""
+        text = self._delete_between(start, end)
+        if not text:
+            return None
+        if self.deleted is not None:
+            self.deleted.store(text, back=back)
+        return text
+
     def backspace(self) -> str | None:
         """Delete the character before the cursor, or join the line to the one above.
 
         Returns what was deleted ("\\n" for a join), or None at the top of the text.
         """
         if self.index > 0:
-            return self._delete_between((self.line, self.index - 1), (self.line, self.index))
+            return self._erase((self.line, self.index - 1), (self.line, self.index), back=True)
         if self.line > 0:
             above = (self.line - 1, len(self.lines[self.line - 1]))
-            return self._delete_between(above, (self.line, 0))
+            return self._erase(above, (self.line, 0), back=True)
         return None
 
     def delete(self) -> str | None:
         """Delete the character at the cursor, or join the next line to this one."""
         here = (self.line, self.index)
         if self.index < len(self.lines[self.line]):
-            return self._delete_between(here, (self.line, self.index + 1))
+            return self._erase(here, (self.line, self.index + 1), back=False)
         if self.line + 1 < len(self.lines):
-            return self._delete_between(here, (self.line + 1, 0))
+            return self._erase(here, (self.line + 1, 0), back=False)
         return None
+
+    def undelete(self) -> bool:
+        """^U: put back what was deleted last. What BS deleted goes before the cursor,
+        and what DEL deleted after it (VZ)."""
+        item = self.deleted.pop() if self.deleted is not None else None
+        if item is None:
+            return False
+        text, back = item
+        start = (self.line, self.index)
+        self._insert_at(start, text)  # the cursor goes past the text
+        if not back:
+            self._go(*start)
+        return True
 
     def tab(self, *, overwrite: bool = False) -> None:
         """Insert a tab, or in overwrite mode move to the next tab stop (VZ)."""
@@ -386,32 +442,39 @@ class Window:
         column = next_tab_stop(self.cursor_column(), self.layout.tab_size)
         self._go(self.line, folded.index_at(row, column))
 
-    def _delete_range(self, start: int, end: int) -> str | None:
+    def _delete_range(self, start: int, end: int, *, back: bool) -> str | None:
         """Delete from `start` to `end` in the cursor line, leaving the cursor at `start`."""
         self._go(self.line, start)
-        return self._delete_between((self.line, start), (self.line, end)) or None
+        return self._erase((self.line, start), (self.line, end), back=back)
+
+    def _same_class_run(self, step: int) -> int:
+        """Where the run of characters of the class next to the cursor ends."""
+        text = self.lines[self.line]
+        i = self.index if step > 0 else self.index - 1
+        kind = chartype.char_class(text[i])
+        while 0 <= i + step < len(text) and chartype.char_class(text[i + step]) == kind:
+            i += step
+        return i + 1 if step > 0 else i
 
     def delete_word_back(self) -> str | None:
-        """Delete back to where the word left command goes. At the line top, as BS."""
+        """Delete the characters before the cursor of one class, back to where the
+        class changes (VZ). At the line top, as BS."""
         if self.index == 0:
             return self.backspace()
-        end = self.index
-        self.word_left()
-        return self._delete_range(self.index, end)
+        return self._delete_range(self._same_class_run(-1), self.index, back=True)
 
     def delete_word(self) -> str | None:
-        """Delete up to where the word right command goes. At the line end, as DEL."""
+        """Delete the characters after the cursor of one class (VZ). At the line end,
+        as DEL."""
         if self.index == len(self.lines[self.line]):
             return self.delete()
-        start = self.index
-        self.word_right()
-        return self._delete_range(start, self.index)
+        return self._delete_range(self.index, self._same_class_run(1), back=False)
 
     def delete_to_line_top(self) -> str | None:
-        return self._delete_range(0, self.index)
+        return self._delete_range(0, self.index, back=True)
 
     def delete_to_line_end(self) -> str | None:
-        return self._delete_range(self.index, len(self.lines[self.line]))
+        return self._delete_range(self.index, len(self.lines[self.line]), back=False)
 
     # Blocks
 

@@ -16,8 +16,9 @@ terminal width).
 
 Under development. The editor works on the terminal with VZ's keys for moving,
 typing, blocks and the text stack, opening, saving and closing files, and with
-Claude Code as below. The filer works too. Search and replace, undelete, and macros
-are still to come.
+Claude Code as below. VZ has no general undo, and neither has pyvz: ^U puts back
+what the delete keys deleted, and ^QL puts the cursor line back as it was. The filer
+works too. Search and replace, and macros are still to come.
 
 ## Usage
 

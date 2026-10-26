@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from pyvz.editor.layout import Layout
+from pyvz.editor.stack import Deleted
 from pyvz.editor.window import Window
 from pyvz.keys.commands import Cmd
 from pyvz.text.document import Document
@@ -55,9 +56,12 @@ class LineInput:
     down go through the history instead.
     """
 
-    def __init__(self, text: str = "", history: list[str] | None = None) -> None:
+    def __init__(
+        self, text: str = "", history: list[str] | None = None, deleted: Deleted | None = None
+    ) -> None:
         self.window = Window(Document(lines=[text]), Layout(width=1 << 20))
         self.window.index = len(text)
+        self.window.deleted = deleted
         self.history = history if history is not None else []
         self._recall = len(self.history)
         self._typed = text
@@ -116,6 +120,7 @@ _LINE_COMMANDS = {
     Cmd.DELETE_WORD: Window.delete_word,
     Cmd.DELETE_TO_LINE_TOP: Window.delete_to_line_top,
     Cmd.DELETE_TO_LINE_END: Window.delete_to_line_end,
+    Cmd.UNDELETE: Window.undelete,
 }
 
 

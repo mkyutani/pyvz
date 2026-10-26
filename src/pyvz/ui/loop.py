@@ -115,7 +115,7 @@ class Loop:
         into.
         """
         editor = self._editor()
-        line = LineInput(text, self.history.get(kind) if kind else [])
+        line = LineInput(text, self.history.get(kind) if kind else [], editor.deleted)
         box = InputBox(title, line)
         self.layers.append(box)
         try:

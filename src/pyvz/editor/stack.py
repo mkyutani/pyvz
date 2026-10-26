@@ -28,3 +28,32 @@ class TextStack:
 
     def clear(self) -> None:
         self.items.clear()
+
+
+DELETED_LIMIT = 100_000  # characters; VZ's buffer (Bc) was 1024 bytes
+
+
+class Deleted:
+    """What BS, DEL and the other delete commands deleted, for ^U to put back (VZ).
+
+    Each deletion is one entry, so ^U after deleting three characters with BS puts
+    them back one at a time. The oldest go first when the buffer is full.
+    """
+
+    def __init__(self, limit: int = DELETED_LIMIT) -> None:
+        self.limit = limit
+        self.items: list[tuple[str, bool]] = []  # (text, deleted backwards)
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def store(self, text: str, *, back: bool) -> None:
+        if not text:
+            return
+        self.items.append((text, back))
+        total = sum(len(t) for t, _ in self.items)
+        while total > self.limit and len(self.items) > 1:
+            total -= len(self.items.pop(0)[0])
+
+    def pop(self) -> tuple[str, bool] | None:
+        return self.items.pop() if self.items else None

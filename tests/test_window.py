@@ -206,16 +206,23 @@ def test_tab_in_overwrite_mode_moves_to_the_next_stop():
 
 
 def test_delete_words_and_line_parts():
+    # VZ deletes the run of characters of one class next to the cursor.
     w = window("hello  world.txt", width=40)
     w.index = 7
-    assert w.delete_word() == "world."  # up to where the word right command stops
-    assert w.lines == ["hello  txt"]
-    assert w.delete_word_back() == "hello  "
-    assert (w.lines, w.index) == (["txt"], 0)
-    w.index = 1
-    assert w.delete_to_line_end() == "xt"
-    assert w.delete_to_line_top() == "t"
+    assert w.delete_word() == "world"
+    assert w.lines == ["hello  .txt"]
+    assert w.delete_word_back() == "  "
+    assert (w.lines, w.index) == (["hello.txt"], 5)
+    assert w.delete_word() == "."
+    w.index = 2
+    assert w.delete_to_line_end() == "llotxt"
+    assert w.delete_to_line_top() == "he"
     assert w.delete_to_line_top() is None
+
+
+def test_delete_word_takes_kanji_and_hiragana_apart():
+    w = window("漢字ひらがな", width=40)
+    assert w.delete_word() == "漢字"
 
 
 def test_delete_words_join_lines_at_the_ends():

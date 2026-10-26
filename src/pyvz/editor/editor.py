@@ -10,7 +10,7 @@ from typing import Protocol
 
 from pyvz import history, paths
 from pyvz.editor.layout import Layout
-from pyvz.editor.stack import TextStack
+from pyvz.editor.stack import Deleted, TextStack
 from pyvz.editor.window import CHAR, LINE, Window
 from pyvz.filer.filer import Insert, Open
 from pyvz.keys.commands import Cmd
@@ -55,6 +55,8 @@ class Prompt(Protocol):
 
 # Commands that change the text, refused for a read-only text.
 _EDITS = {
+    Cmd.UNDELETE,
+    Cmd.CANCEL_LINE,
     Cmd.CUT,
     Cmd.PASTE,
     Cmd.LOAD,
@@ -94,6 +96,7 @@ class Editor:
         self.keep_open = False
         self.prompt: Prompt | None = None
         self.stack = TextStack()
+        self.deleted = Deleted()  # for ^U, shared by the texts and the input boxes
         self._last: tuple[int, int | None] | None = None
         self._commands: dict[int, Callable[[int | None], object]] = {
             Cmd.REPEAT: self._repeat,
@@ -114,6 +117,7 @@ class Editor:
             Cmd.DELETE_WORD: lambda _: self.window.delete_word(),
             Cmd.DELETE_TO_LINE_TOP: lambda _: self.window.delete_to_line_top(),
             Cmd.DELETE_TO_LINE_END: lambda _: self.window.delete_to_line_end(),
+            Cmd.UNDELETE: lambda _: self.window.undelete(),
             Cmd.TAB: lambda _: self.window.tab(overwrite=not self.insert_mode),
             Cmd.ROLL_UP: lambda _: self.window.scroll(-1),
             Cmd.ROLL_DOWN: lambda _: self.window.scroll(1),
@@ -135,6 +139,7 @@ class Editor:
             Cmd.LOAD: lambda _: self.paste(pop=False),
             Cmd.CLEAR_STACK: lambda _: self.clear_stack(),
             Cmd.BLOCK_JUMP: lambda _: self.window.jump_block(),
+            Cmd.CANCEL_LINE: lambda _: self.window.cancel_line(),
             Cmd.READ_ONLY: lambda _: self._toggle_read_only(),
             Cmd.OPEN: lambda _: self.open_command(),
             Cmd.OPEN_READ_ONLY: lambda _: self.open_command(readonly=True),
@@ -166,6 +171,7 @@ class Editor:
         """Show a window made elsewhere, such as the prompt file of Claude Code."""
         window.layout = self.layout
         window.height = self.height
+        window.deleted = self.deleted
         self.windows.append(window)
         self.show(len(self.windows) - 1)
         return window
@@ -220,6 +226,7 @@ class Editor:
             window.block = CHAR
         action(digit)
         if self.exit_code is None and self.windows:
+            self.window.left_line()
             self.window.keep_visible()
         return True
 
