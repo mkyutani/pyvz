@@ -46,6 +46,7 @@ class Window:
         self.block: str | None = None  # LINE or CHAR while marking a block
         self.deleted: Deleted | None = None  # where deletions go for ^U, shared
         self.found: tuple[Pos, Pos] | None = None  # a match shown while asking about it
+        self.auto_indent = True  # VZ: Ei
         # The cursor line as it was before the edits made in it since the cursor came
         # to it, with the modified flag then: VZ's line buffer, which ^QL drops.
         self._line_before: tuple[int, str, bool] | None = None
@@ -469,7 +470,7 @@ class Window:
             self._go(line + 1, 0)
             return
         head = self.lines[self.line][: self.index]
-        indent = head[: len(head) - len(head.lstrip(" \t"))]
+        indent = head[: len(head) - len(head.lstrip(" \t"))] if self.auto_indent else ""
         self.insert("\n" + indent)
 
     def _erase(self, start: Pos, end: Pos, *, back: bool) -> str | None:
@@ -538,7 +539,7 @@ class Window:
     def insert_line(self) -> None:
         """^N: a new line above the cursor line, with its indent (VZ)."""
         current = self.lines[self.line]
-        indent = current[: len(current) - len(current.lstrip(" \t"))]
+        indent = current[: len(current) - len(current.lstrip(" \t"))] if self.auto_indent else ""
         line = self.line
         self._insert_at((line, 0), indent + "\n")
         self._go(line, len(indent))

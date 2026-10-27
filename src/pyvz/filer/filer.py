@@ -11,7 +11,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pyvz import paths
@@ -27,8 +27,18 @@ LEFT, RIGHT = 0, 1
 PLACES = ["~/windownloads", "~/windocuments", "~/windropbox", "~"]
 
 
+@dataclass
+class FilerSettings:
+    places: list[str] = field(default_factory=lambda: list(PLACES))  # the Dir menu
+    masks: list[str] = field(default_factory=list)  # patterns for the Mask menu
+    single: str = "right"  # where one window goes: right, left or full
+
+
 class Filer:
-    def __init__(self, origin: Path, start: Path | None = None) -> None:
+    def __init__(
+        self, origin: Path, start: Path | None = None, settings: FilerSettings | None = None
+    ) -> None:
+        self.settings = settings or FilerSettings()
         # Where Claude Code (or pyvz) was started. Inserted paths are relative to it.
         self.origin = Path(os.path.abspath(origin))
         first = Path(os.path.abspath(start)) if start is not None else self.origin
@@ -92,7 +102,7 @@ class Filer:
         The keys are the positions, so they stay the same on every machine.
         """
         found = []
-        for i, place in enumerate([*PLACES, str(self.origin)], start=1):
+        for i, place in enumerate([*self.settings.places, str(self.origin)], start=1):
             path = Path(os.path.expanduser(place))
             if path.is_dir():
                 found.append((str(i), path))

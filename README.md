@@ -19,8 +19,8 @@ typing, blocks and the text stack, search and replace, opening, saving and closi
 files, and with Claude Code as below. VZ has no general undo, and neither has pyvz:
 ^U puts back what the delete keys deleted, and ^QL puts the cursor line back as it
 was. `@Y` (F4) splits the screen into upper and lower, then left and right windows,
-and `@W` (F2) goes between them. The filer works too. Settings and macros are still
-to come.
+and `@W` (F2) goes between them. The filer and the settings file work too. Macros
+are still to come.
 
 Search strings follow VZ: `^QF` sets one, and `^R` and `^C` then search backward and
 forward. Options go in front, as in `\WC word` (W word search, C ignore case, Z full
@@ -77,9 +77,40 @@ filer. One window takes the right half of the terminal, so the text stays in sig
 | `i` | Type the paths of the selected files into the text, relative to the start |
 | Upper case letter | The next file with that initial |
 
+### Settings
+
 Settings go to `~/.config/pyvz/config.toml`, and state (filer position, histories,
 drafts on hold) to `~/.local/state/pyvz/`, following the XDG Base Directory
-Specification.
+Specification. Everything in the settings can be left out; mistakes are shown when
+pyvz starts, and the defaults are used for them.
+
+```toml
+[editor]
+tab_size = 8
+ambiguous_wide = false    # true if the terminal shows box drawing etc. 2 wide
+auto_indent = true
+function_keys = true      # the line of function key labels
+esc_delay_ms = 50         # how long to wait after ESC for the rest of a key
+
+[search]
+options = ""              # default search options, letters of WCZXI
+
+[keys]
+def = "~/vz/VZ.DEF"       # take the command keys ("* C") of a VZ DEF file
+75 = "[ESC]S ^KS"         # keys of a command, by number or name, as in DEF files
+SET_SEARCH = "^QF [F06]"
+
+[filer]
+places = ["~/windownloads", "~/windocuments", "~/windropbox", "~"]   # the Dir menu
+masks = ["*.md", "*.py *.toml"]                                     # the Mask menu
+single = "right"          # where one filer window goes: right, left (VZ) or full
+
+[colors]                  # text, status, status_other, control, mark, message,
+                          # key_label, frame, title, hot, chosen, chosen_hot,
+                          # directory, executable, hidden, link, origin_title
+status = { fg = "black", bg = "cyan" }
+directory = { fg = 6, bold = true }
+```
 
 ## Development
 

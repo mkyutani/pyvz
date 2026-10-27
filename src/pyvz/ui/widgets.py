@@ -10,14 +10,9 @@ from pyvz.editor.stack import Deleted
 from pyvz.editor.window import Window
 from pyvz.keys.commands import Cmd
 from pyvz.text.document import Document
+from pyvz.ui import theme
 from pyvz.ui.screen import PLAIN, Screen, Style, clip, text_width
 from pyvz.ui.view import Overlay
-
-FRAME = Style(fg=6)
-TITLE = Style(fg=6, bold=True)
-HOT = Style(fg=3, bold=True)  # the key letter of a menu item
-CHOSEN = Style(reverse=True)
-CHOSEN_HOT = Style(fg=3, bold=True, reverse=True)
 
 
 def frame(
@@ -28,13 +23,15 @@ def frame(
     width: int,
     *,
     title: str = "",
-    title_style: Style = TITLE,
+    title_style: Style | None = None,
     footer: str = "",
-    style: Style = FRAME,
+    style: Style | None = None,
 ) -> None:
     """Draw a box and clear its inside."""
     if height < 2 or width < 2:
         return
+    style = style or theme.style("frame")
+    title_style = title_style or theme.style("title")
     right, bottom = left + width - 1, top + height - 1
     screen.put(top, left, "┌" + "─" * (width - 2) + "┐", style)
     for row in range(top + 1, bottom):
@@ -181,10 +178,12 @@ class Menu:
             row = top + 1 + i
             chosen = i == self.current
             if chosen:
-                screen.fill(row, left + 1, left + width - 1, CHOSEN)
-            column = screen.put(row, left + 2, item.key, CHOSEN_HOT if chosen else HOT)
+                screen.fill(row, left + 1, left + width - 1, theme.style("chosen"))
+            column = screen.put(
+                row, left + 2, item.key, theme.style("chosen_hot") if chosen else theme.style("hot")
+            )
             label = clip(item.label, width - 6, ambiguous_wide=screen.ambiguous_wide)
-            screen.put(row, column + 1, label, CHOSEN if chosen else PLAIN)
+            screen.put(row, column + 1, label, theme.style("chosen") if chosen else PLAIN)
         screen.cursor = None
 
     def find(self, ch: str) -> int | None:

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum
 from importlib import resources
+from pathlib import Path
 
 from pyvz.keys import codes
 from pyvz.keys.commands import Cmd
@@ -96,27 +97,101 @@ def parse_command_keys(text: str) -> Keymap:
     return keymap
 
 
-def default_keymap() -> Keymap:
-    """The key bindings of VZ.DEF (IBM version), with pyvz's changes."""
-    text = resources.files("pyvz.keys").joinpath("vz_keys.def").read_text("utf-8")
-    keymap = parse_command_keys(text)
-    q = keymap.prefixes.index(codes.ctrl("Q"))
-    k = keymap.prefixes.index(codes.ctrl("K"))
-    esc = keymap.prefixes.index(codes.ESC)
+def command_section(text: str) -> str:
+    """The "* C" section (command keys) of a DEF file.
+
+    VZ's DEF files hold parts for the PC-98 under "#if 98"; the other side of "#else"
+    is taken, which is for the IBM PC, as pyvz runs on terminals of today.
+    """
+    taken = []
+    inside = False
+    skipping = False
+    for line in text.splitlines():
+        if line.startswith("* "):
+            inside = line[2:3].upper() == "C"
+            continue
+        if not inside:
+            continue
+        if line.startswith("#if"):
+            skipping = line.split()[1:2] == ["98"]
+        elif line.startswith("#else"):
+            skipping = not skipping
+        elif line.startswith("#endif"):
+            skipping = False
+        elif not skipping:
+            taken.append(line)
+    return "\n".join(taken)
+
+
+def read_def(path: Path) -> str:
+    """The text of a DEF file, which VZ wrote in Shift_JIS. UTF-8 is read too."""
+    data = path.read_bytes()
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("cp932", "replace")
+
+
+def vz_keymap(text: str | None = None) -> Keymap:
+    """The key bindings of the "* C" section of a DEF file (VZ.DEF's by default), with
+    pyvz's changes for terminals."""
+    if text is None:
+        text = resources.files("pyvz.keys").joinpath("vz_keys.def").read_text("utf-8")
+    keymap = parse_command_keys(command_section(text) if "* " in text else text)
+    prefixes = keymap.prefixes
+    q = prefixes.index(codes.ctrl("Q")) if codes.ctrl("Q") in prefixes else None
+    k = prefixes.index(codes.ctrl("K")) if codes.ctrl("K") in prefixes else None
 
     # A terminal sends the same byte for ^[ and ESC, and ESC is a prefix key, so the
     # last command is repeated with ESC ESC instead of ^[.
-    keymap.keys[Cmd.REPEAT] = [codes.stroke2(esc, 0x1B)]
+    if codes.ESC in prefixes:
+        keymap.keys[Cmd.REPEAT] = [codes.stroke2(prefixes.index(codes.ESC), 0x1B)]
     # VZ.DEF did these with macros 12, 13, 16 and 17.
-    keymap.bind(Cmd.SCREEN_LINE_LEFT, codes.HOME, codes.stroke2(q, "["))
-    keymap.bind(Cmd.SCREEN_LINE_RIGHT, codes.END, codes.stroke2(q, "]"))
+    keymap.bind(Cmd.SCREEN_LINE_LEFT, codes.HOME)
+    keymap.bind(Cmd.SCREEN_LINE_RIGHT, codes.END)
+    if q is not None:
+        keymap.bind(Cmd.SCREEN_LINE_LEFT, codes.stroke2(q, "["))
+        keymap.bind(Cmd.SCREEN_LINE_RIGHT, codes.stroke2(q, "]"))
+        keymap.bind(Cmd.LAST_POSITION, codes.PREFIX_DIGIT | q)  # ^Q1-^Q4: jump to a mark
+    if k is not None:
+        keymap.bind(Cmd.MARK_POSITION, codes.PREFIX_DIGIT | k)  # ^K1-^K4: set a mark
     # In the filer, [END] goes to the last file as [HOME] ([CLR]) goes to the first.
     keymap.bind(Cmd.FILER_TOP_END, codes.END)
-    keymap.bind(Cmd.MARK_POSITION, codes.PREFIX_DIGIT | k)  # ^K1-^K4: set a mark
-    keymap.bind(Cmd.LAST_POSITION, codes.PREFIX_DIGIT | q)  # ^Q1-^Q4: jump to a mark
     keymap.messages[Cmd.SCREEN_LINE_LEFT] = "画面の左端"
     keymap.messages[Cmd.SCREEN_LINE_RIGHT] = "画面の右端"
     return keymap
+
+
+def default_keymap() -> Keymap:
+    """The key bindings of VZ.DEF (IBM version), with pyvz's changes."""
+    return vz_keymap()
+
+
+def command_number(name: str) -> int:
+    """A command by its number ("75") or its name in pyvz ("SAVE", any case)."""
+    if name.isdigit():
+        return int(name)
+    try:
+        return int(Cmd[name.upper()])
+    except KeyError:
+        raise ValueError(f"そういうコマンドはありません: {name}") from None
+
+
+def rebind(keymap: Keymap, command: int, keys: str) -> None:
+    """Give a command the keys written as in a DEF file, in place of its own.
+
+    Raises ValueError for keys that cannot be read.
+    """
+    bound = []
+    for token in keys.split():
+        rest = token
+        while rest:
+            if command in _TWO_STROKE:
+                code, rest = codes.parse_keys(rest, keymap.prefixes)
+            else:
+                code, rest = codes.parse_key(rest, keymap.prefixes)
+            bound.append(code)
+    keymap.keys[command] = bound
 
 
 def follow(prefix_index: int, key_codes: Sequence[int] | None, ch: str | None):

@@ -21,10 +21,11 @@ from pyvz.filer.pane import Pane
 from pyvz.keys import codes
 from pyvz.keys.commands import Cmd
 from pyvz.keys.keymap import Mode
+from pyvz.ui import theme
 from pyvz.ui.loop import Loop, Typed
 from pyvz.ui.screen import PLAIN, Screen, Style, clip_middle, clip_start
 from pyvz.ui.view import Overlay, draw_message
-from pyvz.ui.widgets import HOT, TITLE, frame
+from pyvz.ui.widgets import frame
 
 MENU_BAR = [
     ("F", "File"),
@@ -56,11 +57,6 @@ SORT_MENU = [
     ("S", "小さい順", Order.SMALLEST),
 ]
 
-DIRECTORY = Style(fg=6)
-EXECUTABLE = Style(fg=3)
-HIDDEN = Style(fg=8)
-LINK = Style(fg=5)
-ORIGIN_TITLE = Style(fg=6, bold=True, reverse=True)
 
 # Below this width, one window takes the whole width instead of the right half.
 NARROW = 60
@@ -76,13 +72,13 @@ def _bar_columns() -> list[int]:
 
 def _style(e: Entry) -> Style:
     if e.is_link:
-        return LINK
+        return theme.style("link")
     if e.is_dir:
-        return DIRECTORY
+        return theme.style("directory")
     if e.hidden:
-        return HIDDEN
+        return theme.style("hidden")
     if e.executable:
-        return EXECUTABLE
+        return theme.style("executable")
     return PLAIN
 
 
@@ -119,8 +115,11 @@ class FilerLayer:
         if filer.dual:
             half = width // 2
             return [(filer.panes[LEFT], 0, half), (filer.panes[RIGHT], half, width - half)]
-        if width < NARROW:
+        single = filer.settings.single
+        if width < NARROW or single == "full":
             return [(filer.panes[RIGHT], 0, width)]
+        if single == "left":  # VZ's place
+            return [(filer.panes[RIGHT], 0, width // 2)]
         return [(filer.panes[RIGHT], width // 2, width - width // 2)]
 
     def draw(self, screen: Screen, overlay: Overlay) -> None:
@@ -137,7 +136,7 @@ class FilerLayer:
     def _menu_bar(self, screen: Screen) -> None:
         screen.fill(0, 0, screen.width)
         for (key, label), column in zip(MENU_BAR, _bar_columns(), strict=True):
-            screen.put(0, column, key, HOT)
+            screen.put(0, column, key, theme.style("hot"))
             screen.put(0, column + 1, label[1:])
 
     def _pane(
@@ -148,7 +147,7 @@ class FilerLayer:
         if pane.pattern != "*":
             title = title.rstrip("/") + "/" + pane.pattern
         title = f" {clip_start(title, width - 4, ambiguous_wide=wide)} "
-        style = ORIGIN_TITLE if pane.path == self.filer.origin else TITLE
+        style = theme.style("origin_title" if pane.path == self.filer.origin else "title")
         footer = self._footer(pane)
         frame(screen, 1, left, height, width, title=title, title_style=style, footer=footer)
         rows = self.list_rows(screen.height)
@@ -397,12 +396,17 @@ class FilerScreen:
         elif letter == "D":
             items = self._dir_items()
         elif letter == "M":
-            items = MASK_MENU
+            items = self._mask_items()
         else:
             items = [(k, label) for k, label, _ in SORT_MENU]
         if not items:
             return None
         return self.loop.menu(items, top=1, left=column - 1, sideways=True)
+
+    def _mask_items(self) -> list[tuple[str, str]]:
+        """すべて, 隠しファイル, then the patterns of the settings, by digits."""
+        patterns = self.filer.settings.masks[:9]
+        return [*MASK_MENU, *((str(i), p) for i, p in enumerate(patterns, start=1))]
 
     def _dir_items(self) -> list[tuple[str, str]]:
         items = []
@@ -428,10 +432,12 @@ class FilerScreen:
         elif letter == "D":
             self._go(pane, filer.places()[index][1])
         elif letter == "M":
-            if MASK_MENU[index][0] == "W":
+            if index == 0:
                 pane.pattern = "*"
-            else:
+            elif index == 1:
                 pane.show_hidden = not pane.show_hidden
+            else:
+                pane.pattern = filer.settings.masks[index - len(MASK_MENU)]
             self._reload()
         elif letter == "S":
             filer.set_order(SORT_MENU[index][2])

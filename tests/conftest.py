@@ -8,3 +8,12 @@ def private_xdg(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Mo
     monkeypatch.setenv("XDG_CONFIG_HOME", str(base / "config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(base / "state"))
     return base
+
+
+@pytest.fixture(autouse=True)
+def default_colors():
+    """Colors set by a test do not stay for the next one."""
+    from pyvz.ui import theme
+
+    yield
+    theme.reset()

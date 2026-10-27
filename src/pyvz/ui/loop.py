@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Protocol
 
 from pyvz.editor.editor import Editor
-from pyvz.filer.filer import Filer, Insert, Open
+from pyvz.filer.filer import Filer, FilerSettings, Insert, Open
 from pyvz.history import History
 from pyvz.keys import codes
 from pyvz.keys.commands import Cmd
@@ -64,6 +64,8 @@ class Loop:
         self.editor: Editor | None = None
         self.overlay = view.Overlay()
         self.layers: list[Layer] = []
+        self.esc_delay = ESC_DELAY
+        self.filer_settings = FilerSettings()
         # The directory pyvz started in: Claude Code's. Inserted paths are relative to it.
         self.origin = Path.cwd()
         self._filer: Filer | None = None
@@ -217,7 +219,7 @@ class Loop:
         from pyvz.ui.filerui import FilerScreen  # it builds on this module
 
         if self._filer is None:
-            self._filer = Filer(self.origin)
+            self._filer = Filer(self.origin, settings=self.filer_settings)
             self._filer.restore_state()
         if start is not None:
             pane = self._filer.pane
@@ -290,7 +292,7 @@ class Loop:
 
     def next_event(self) -> Event:
         while not self._events:
-            timeout = ESC_DELAY if self._decoder.pending else None
+            timeout = self.esc_delay if self._decoder.pending else None
             data = self.terminal.read(timeout)
             if self.terminal.take_resized():
                 self.resize()

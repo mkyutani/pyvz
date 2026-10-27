@@ -135,6 +135,8 @@ class Editor:
         self.console = console
         self.layout = layout or Layout()
         self.screen = (self.layout.width, 24)  # columns and rows of the terminal
+        self.function_keys = True  # the line of function key labels at the bottom
+        self.auto_indent = True
         self.windows: list[Window] = []
         # The split: None, UPPER_LOWER or LEFT_RIGHT, the two windows shown (upper or
         # left first), and where the split is (None: in the middle).
@@ -249,6 +251,7 @@ class Editor:
         """Show a window made elsewhere, such as the prompt file of Claude Code."""
         window.layout = self.layout
         window.deleted = self.deleted
+        window.auto_indent = self.auto_indent
         self.windows.append(window)
         self.show(len(self.windows) - 1)
         return window
@@ -287,12 +290,17 @@ class Editor:
         self.layout = replace(self.layout, width=columns)
         self._relayout()
 
+    @property
+    def bottom_rows(self) -> int:
+        """Rows below the windows: the message line, and the function keys if shown."""
+        return BOTTOM_ROWS if self.function_keys else BOTTOM_ROWS - 1
+
     def regions(self) -> list[Region]:
         """The windows on the screen, the one being edited among them."""
         if not self.windows:
             return []
         columns, rows = self.screen
-        area = max(rows - BOTTOM_ROWS, 2)  # rows for the windows with their status lines
+        area = max(rows - self.bottom_rows, 2)  # rows for the windows and status lines
         if self.split is None or len(self.split_windows) != 2:
             return [Region(self.window, 0, 0, columns, area - 1)]
         first, second = self.split_windows

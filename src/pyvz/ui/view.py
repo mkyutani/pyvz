@@ -9,15 +9,8 @@ from dataclasses import dataclass, replace
 
 from pyvz.editor.editor import LEFT_RIGHT, Editor, Region
 from pyvz.editor.layout import shown_as
+from pyvz.ui import theme
 from pyvz.ui.screen import PLAIN, Screen, Style, clip, clip_middle, clip_start, text_width
-
-STATUS = Style(reverse=True)
-STATUS_OTHER = Style(reverse=True, dim=True)  # of the window the cursor is not in
-FRAME = Style(fg=6)
-CONTROL = Style(fg=6)  # control characters and bytes that are not UTF-8
-MARK = Style(fg=8)  # line ends and the end of the text
-MESSAGE = Style(fg=3, bold=True)
-KEY_LABEL = Style(reverse=True)
 
 LINE_END_MARK = "↵"
 END_MARK = "[EOF]"
@@ -53,10 +46,11 @@ def draw(screen: Screen, editor: Editor, overlay: Overlay) -> None:
     if editor.split == LEFT_RIGHT and len(regions) == 2:
         column = regions[1].left - 1
         for row in range(regions[0].rows + 1):
-            screen.put(row, column, "│", FRAME)
-    message_row = max(screen.height - 2, 0)
+            screen.put(row, column, "│", theme.style("frame"))
+    message_row = max(screen.height - editor.bottom_rows, 0)
     end = draw_message(screen, overlay, message_row)
-    _function_keys(screen, message_row + 1)
+    if editor.function_keys:
+        _function_keys(screen, message_row + 1)
     screen.cursor = (message_row, end) if overlay.question else cursor
 
 
@@ -77,7 +71,7 @@ def _status(screen: Screen, editor: Editor, region: Region, active: bool) -> Non
     room -= text_width(number, ambiguous_wide=wide) + text_width(marks, ambiguous_wide=wide)
     # The end of a long path is kept, which tells the files apart.
     name = clip_start(editor.name(window), max(room, 0), ambiguous_wide=wide)
-    style = STATUS if active else STATUS_OTHER
+    style = theme.style("status") if active else theme.style("status_other")
     left, row = region.left, region.top
     screen.fill(row, left, left + region.width, style)
     screen.put(row, left, number + name + marks, style)
@@ -115,16 +109,18 @@ def _text(screen: Screen, region: Region) -> tuple[int, int] | None:
             if alt is None:
                 screen.put(y, left + folded.columns[i], ch, styled(PLAIN, line_no, i))
             else:
-                style = PLAIN if ch == "\t" else CONTROL
+                style = PLAIN if ch == "\t" else theme.style("control")
                 screen.put(y, left + folded.columns[i], alt, styled(style, line_no, i))
         if pos == cursor_pos:
             cursor = (y, left + folded.columns[window.index])
         if row == folded.rows - 1:
             column = left + folded.columns[len(text)]
             if line_no < len(lines) - 1:
-                screen.put(y, column, LINE_END_MARK, styled(MARK, line_no, len(text)))
+                screen.put(
+                    y, column, LINE_END_MARK, styled(theme.style("mark"), line_no, len(text))
+                )
             else:
-                screen.put(y, column, END_MARK, MARK)
+                screen.put(y, column, END_MARK, theme.style("mark"))
         following = window.next_row(pos)
         if following is None:
             break
@@ -144,7 +140,7 @@ def draw_message(screen: Screen, overlay: Overlay, row: int) -> int:
         text = clip_start(overlay.question, width, ambiguous_wide=wide)
     else:
         text = clip_middle(overlay.prefix or overlay.message, width, ambiguous_wide=wide)
-    return screen.put(row, 0, text, MESSAGE)
+    return screen.put(row, 0, text, theme.style("message"))
 
 
 def _function_keys(screen: Screen, row: int) -> None:
@@ -154,6 +150,6 @@ def _function_keys(screen: Screen, row: int) -> None:
     for i, label in enumerate(FUNCTION_LABELS):
         column = i * slot
         screen.put(row, column, str((i + 1) % 10))
-        screen.fill(row, column + 1, column + slot - 1, KEY_LABEL)
+        screen.fill(row, column + 1, column + slot - 1, theme.style("key_label"))
         label = clip(label, slot - 2, ambiguous_wide=screen.ambiguous_wide)
-        screen.put(row, column + 1, label, KEY_LABEL)
+        screen.put(row, column + 1, label, theme.style("key_label"))
