@@ -20,7 +20,7 @@ from pyvz.editor.search import (
     unescape_replacement,
 )
 from pyvz.editor.stack import Deleted, TextStack
-from pyvz.editor.window import CHAR, LINE, Window
+from pyvz.editor.window import CHAR, LAST, LINE, Window
 from pyvz.filer.filer import Insert, Open
 from pyvz.keys.commands import Cmd
 from pyvz.text.document import Document, encode, write_file
@@ -53,6 +53,10 @@ class Console(Protocol):
         """Put text in the history named `kind`, as if typed into an input box."""
         ...
 
+    def control_char(self) -> str | None:
+        """^P: read a key and give the control character it stands for."""
+        ...
+
 
 class Prompt(Protocol):
     """The prompt file of Claude Code, which can be put on hold as a draft."""
@@ -68,6 +72,9 @@ class Prompt(Protocol):
 
 # Commands that change the text, refused for a read-only text.
 _EDITS = {
+    Cmd.CONTROL_CHAR,
+    Cmd.CHANGE_CASE,
+    Cmd.COPY_FILE_NAME,
     Cmd.INSERT_LINE,
     Cmd.REPLACE,
     Cmd.REPLACE_AGAIN,
@@ -142,6 +149,9 @@ class Editor:
             Cmd.DELETE_TO_LINE_TOP: lambda _: self.window.delete_to_line_top(),
             Cmd.DELETE_TO_LINE_END: lambda _: self.window.delete_to_line_end(),
             Cmd.UNDELETE: lambda _: self.window.undelete(),
+            Cmd.CONTROL_CHAR: lambda _: self.control_char(),
+            Cmd.CHANGE_CASE: lambda _: self.window.change_case(),
+            Cmd.COPY_FILE_NAME: lambda _: self.copy_file_name(),
             Cmd.TAB: lambda _: self.window.tab(overwrite=not self.insert_mode),
             Cmd.ROLL_UP: lambda _: self.window.scroll(-1),
             Cmd.ROLL_DOWN: lambda _: self.window.scroll(1),
@@ -163,6 +173,10 @@ class Editor:
             Cmd.WINDOW_END: lambda _: self.window.window_end(),
             Cmd.TEXT_TOP: lambda _: self.window.text_top(),
             Cmd.TEXT_END: lambda _: self.window.text_end(),
+            Cmd.LAST_POSITION: self.last_position,
+            Cmd.MARK_POSITION: self.mark_position,
+            Cmd.JUMP_LINE: lambda _: self.jump_line(),
+            Cmd.MATCH_BRACKET: lambda _: self.match_bracket(),
             Cmd.BLOCK: lambda _: self.toggle_block(),
             Cmd.CUT: lambda _: self.cut(delete=True),
             Cmd.PASTE: lambda _: self.paste(pop=True),
@@ -295,6 +309,56 @@ class Editor:
         doc = self.window.doc
         doc.readonly = not doc.readonly
 
+    # Marks and jumps
+
+    def mark_position(self, digit: int | None) -> None:
+        """^QM: keep the cursor position for ^QP. ^K1-^K4 (VZ.DEF macro 16): set mark
+        1-4."""
+        window = self.window
+        if digit is None:
+            window.set_return()
+            self.console.message("マークしました")
+        elif digit == 0:
+            window.set_return()
+        elif digit <= 4:
+            window.marks[str(digit)] = (window.line, window.index)
+            self.console.message(f"マーク #{digit}")
+
+    def last_position(self, digit: int | None) -> None:
+        """^QP: back to the position kept, keeping this one. ^Q1-^Q4 (VZ.DEF macro 17):
+        go to mark 1-4."""
+        if digit is None or digit == 0:
+            self.window.jump_mark(LAST)
+        elif digit <= 4:
+            self.window.jump_mark(str(digit))
+
+    def jump_line(self) -> None:
+        """^QJ: go to the line numbered in 【行番号】."""
+        text = self.console.gets("【行番号】")
+        if not text:
+            return
+        try:
+            number = int(text.strip())
+        except ValueError:
+            self.console.message(f"{text} は行番号ではありません")
+            return
+        self.window.jump_line(number)
+
+    def match_bracket(self) -> None:
+        if not self.window.match_bracket():
+            self.console.message("括弧が見つかりません")
+
+    def control_char(self) -> None:
+        ch = self.console.control_char()
+        if ch:
+            self.type(ch)
+
+    def copy_file_name(self) -> None:
+        """^QN: type the file name of the text."""
+        window = self.window
+        if window.doc.path is not None:
+            self.type(self.name(window))
+
     # Search and replace
 
     def _search_title(self) -> str:
@@ -307,6 +371,7 @@ class Editor:
         except ValueError as e:
             self.console.message(str(e))
             return False
+        self.window.set_return()  # VZ: ^QP goes back to where the search started
         self.search = text
         self.paging = "S"
         self.console.message(text)  # VZ shows the search string

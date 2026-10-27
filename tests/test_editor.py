@@ -236,7 +236,7 @@ def test_repeat_runs_the_last_command_again(chdir: Path):
 
 def test_commands_not_there_yet():
     editor = Editor(FakeConsole())
-    assert not editor.run(Cmd.MATCH_BRACKET)
+    assert not editor.run(Cmd.SPLIT_MODE)
 
 
 def test_new_file_message(chdir: Path):

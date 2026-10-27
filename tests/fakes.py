@@ -59,3 +59,6 @@ class FakeConsole:
 
     def remember(self, kind: str, text: str) -> None:
         self.remembered.append((kind, text))
+
+    def control_char(self) -> str | None:
+        return self.answers.pop(0)

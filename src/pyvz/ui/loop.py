@@ -144,6 +144,26 @@ class Loop:
     def remember(self, kind: str, text: str) -> None:
         self.history.add(kind, text)
 
+    def control_char(self) -> str | None:
+        """^P: the next key as a control character: ^A or A for U+0001, and so on.
+
+        LF is refused, as in VZ: it would split the line.
+        """
+        self.overlay.prefix = "^P"
+        try:
+            self.draw()
+            event = self.next_event()
+        finally:
+            self.overlay.prefix = ""
+        code = None
+        if isinstance(event, Key):
+            code = next((c for c in event.codes if 0 <= c < 0x20), None)
+        elif isinstance(event, Char | Alt) and "@" <= event.ch.upper() <= "_":
+            code = ord(event.ch.upper()) - 0x40
+        if code is None or code == 0x0A:
+            return None
+        return chr(code)
+
     def menu(
         self,
         items: list[Item] | list[tuple[str, str]],

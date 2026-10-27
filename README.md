@@ -18,8 +18,7 @@ Under development. The editor works on the terminal with VZ's keys for moving,
 typing, blocks and the text stack, search and replace, opening, saving and closing
 files, and with Claude Code as below. VZ has no general undo, and neither has pyvz:
 ^U puts back what the delete keys deleted, and ^QL puts the cursor line back as it
-was. The filer works too. Marks, split windows, settings and macros are still to
-come.
+was. The filer works too. Split windows, settings and macros are still to come.
 
 Search strings follow VZ: `^QF` sets one, and `^R` and `^C` then search backward and
 forward. Options go in front, as in `\WC word` (W word search, C ignore case, Z full

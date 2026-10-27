@@ -22,6 +22,10 @@ Pos = tuple[int, int]
 LINE = "line"
 CHAR = "char"
 BLOCK = "block"  # the mark where the block starts
+LAST = "last"  # the position to go back to with ^QP (VZ's tretp)
+
+_OPENING = {"(": ")", "[": "]", "{": "}", "<": ">"}
+_CLOSING = {close: open_ for open_, close in _OPENING.items()}
 
 
 class Window:
@@ -215,6 +219,79 @@ class Window:
     def go_to(self, pos: Pos) -> None:
         self._go(*self.clamp(pos))
 
+    # Marks and jumps
+
+    def set_return(self) -> None:
+        """Keep the cursor position for ^QP. VZ does this before the long jumps."""
+        self.marks[LAST] = (self.line, self.index)
+
+    def jump_mark(self, name: str) -> bool:
+        """Go to a mark, keeping where the cursor was for ^QP. So ^QP, which goes to
+        LAST, goes back and forth between two places."""
+        if name not in self.marks:
+            return False
+        target = self.clamp(self.marks[name])
+        self.set_return()
+        self._go(*target)
+        return True
+
+    def jump_line(self, number: int) -> None:
+        """^QJ: go to the start of a line, counted from 1."""
+        self.set_return()
+        self._go(max(0, min(number - 1, len(self.lines) - 1)), 0)
+
+    def match_bracket(self) -> bool:
+        """^QK: go to the bracket that matches the one at the cursor, ()[]{}<>, counting
+        the brackets of the same kind in between (VZ)."""
+        current = self.lines[self.line]
+        ch = current[self.index] if self.index < len(current) else ""
+        if ch in _OPENING:
+            found = self._find_bracket(ch, _OPENING[ch], 1)
+        elif ch in _CLOSING:
+            found = self._find_bracket(ch, _CLOSING[ch], -1)
+        else:
+            return False
+        if found is None:
+            return False
+        self._go(*found)
+        return True
+
+    def _find_bracket(self, same: str, other: str, step: int) -> Pos | None:
+        depth = 0
+        line, index = self.line, self.index
+        while True:
+            index += step
+            while index < 0 or index >= len(self.lines[line]):
+                line += step
+                if not 0 <= line < len(self.lines):
+                    return None
+                index = 0 if step > 0 else len(self.lines[line]) - 1
+            ch = self.lines[line][index]
+            if ch == same:
+                depth += 1
+            elif ch == other:
+                if depth == 0:
+                    return line, index
+                depth -= 1
+
+    def change_case(self) -> bool:
+        """^QU: the word from the cursor in lower case if it starts in upper case, and
+        in upper case if it starts in lower case. ASCII letters only, as in VZ."""
+        text = self.lines[self.line]
+        start = self.index
+        if start >= len(text) or not (text[start].isascii() and text[start].isalpha()):
+            return False
+        convert = str.lower if text[start].isupper() else str.upper
+        end = start
+        while end < len(text) and text[end].isascii():
+            if not text[end].isalpha() and chartype.char_class(text[end]) != chartype.ALNUM:
+                break
+            end += 1
+        cursor = (self.line, self.index)
+        self.replace_between((self.line, start), (self.line, end), convert(text[start:end]))
+        self._go(*cursor)
+        return True
+
     def line_top(self) -> None:
         self._go(self.line, 0)
 
@@ -261,10 +338,12 @@ class Window:
             self._go_row(last, self._wanted_column())
 
     def text_top(self) -> None:
+        self.set_return()
         self._go(0, 0)
         self.top = (0, 0)
 
     def text_end(self) -> None:
+        self.set_return()
         last = len(self.lines) - 1
         self._go(last, len(self.lines[last]))
         self.top, _ = self.step(self.cursor_row(), -(self.height - 1))
