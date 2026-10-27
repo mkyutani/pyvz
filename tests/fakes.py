@@ -62,3 +62,6 @@ class FakeConsole:
 
     def control_char(self) -> str | None:
         return self.answers.pop(0)
+
+    def key_command(self) -> int | None:
+        return self.answers.pop(0)

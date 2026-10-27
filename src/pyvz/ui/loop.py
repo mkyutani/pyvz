@@ -144,6 +144,11 @@ class Loop:
     def remember(self, kind: str, text: str) -> None:
         self.history.add(kind, text)
 
+    def key_command(self) -> int | None:
+        self.draw()
+        press = self.read_press(Mode.GETC)
+        return press.number if isinstance(press, Command) else None
+
     def control_char(self) -> str | None:
         """^P: the next key as a control character: ^A or A for U+0001, and so on.
 
@@ -261,7 +266,7 @@ class Loop:
     def resize(self) -> None:
         self._size = self.terminal.size()
         columns, rows = self._size
-        self._editor().resize(columns, view.text_rows(rows))
+        self._editor().resize(columns, rows)
         self._shown = None
 
     def draw(self) -> None:

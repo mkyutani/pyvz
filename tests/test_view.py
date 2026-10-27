@@ -19,7 +19,7 @@ def drawn(*lines: str, width: int = 40, height: int = 8, **kw):
     editor = Editor(Quiet())
     doc = Document(lines=list(lines), path=Path("/x/a.txt"))
     editor.windows.append(Window(doc, editor.layout, **kw))
-    editor.resize(width, view.text_rows(height))
+    editor.resize(width, height)
     screen = Screen(width, height)
     overlay = view.Overlay()
     view.draw(screen, editor, overlay)
@@ -74,6 +74,7 @@ def test_long_name_keeps_its_end_and_the_text_number():
     editor = Editor(Quiet())
     path = Path("/very/long/directory/name/for/the/file.txt")
     editor.windows.append(Window(Document(lines=["x"], path=path), editor.layout))
+    editor.resize(screen.width, screen.height)
     view.draw(screen, editor, view.Overlay())
     assert screen.text(0).startswith(" 1 …")
     assert "file.txt" in screen.text(0)
@@ -83,7 +84,7 @@ def test_question_keeps_its_end_and_takes_the_cursor():
     screen, editor, overlay = drawn("abc", width=20)
     overlay.question = "/long/path/to/some/file.txt を出力しますか？ (Y/N) "
     view.draw(screen, editor, overlay)
-    row = view.text_rows(8) + 1
+    row = 8 - 2  # the message line
     assert screen.text(row).startswith("…")
     assert "(Y/N)" in screen.text(row)
     assert screen.cursor[0] == row

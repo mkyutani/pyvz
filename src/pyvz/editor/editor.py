@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -57,6 +57,10 @@ class Console(Protocol):
         """^P: read a key and give the control character it stands for."""
         ...
 
+    def key_command(self) -> int | None:
+        """Draw the screen, read a key and give its command, or None."""
+        ...
+
 
 class Prompt(Protocol):
     """The prompt file of Claude Code, which can be put on hold as a draft."""
@@ -105,12 +109,39 @@ _VERTICAL = {
 _ALONG_LINE = {*range(Cmd.LEFT, Cmd.REDRAW_LINE + 1), Cmd.SCREEN_LINE_LEFT, Cmd.SCREEN_LINE_RIGHT}
 
 
+# Rows of the screen besides the windows: the message line and the function keys.
+BOTTOM_ROWS = 2
+# Split modes (VZ: full, upper and lower, left and right).
+UPPER_LOWER = "upper-lower"
+LEFT_RIGHT = "left-right"
+MIN_ROWS = 1  # text rows of a window, at least
+MIN_COLUMNS = 10
+
+
+@dataclass(frozen=True)
+class Region:
+    """Where a window is on the screen. Its status line is on row `top`, and its text
+    takes `rows` rows below it."""
+
+    window: Window
+    top: int
+    left: int
+    width: int
+    rows: int
+
+
 class Editor:
     def __init__(self, console: Console, layout: Layout | None = None) -> None:
         self.console = console
         self.layout = layout or Layout()
-        self.height = 1
+        self.screen = (self.layout.width, 24)  # columns and rows of the terminal
         self.windows: list[Window] = []
+        # The split: None, UPPER_LOWER or LEFT_RIGHT, the two windows shown (upper or
+        # left first), and where the split is (None: in the middle).
+        self.split: str | None = None
+        self.split_windows: list[Window] = []
+        self.split_row: int | None = None
+        self.split_column: int | None = None
         self.current = 0
         self._previous = 0  # the text shown before, for switching back
         self.insert_mode = True
@@ -190,6 +221,8 @@ class Editor:
             Cmd.OPEN_READ_ONLY: lambda _: self.open_command(readonly=True),
             Cmd.CLOSE_OPEN: lambda _: self.close_open(),
             Cmd.SWITCH_WINDOW: lambda _: self.switch_back(),
+            Cmd.SPLIT_MODE: lambda _: self.split_mode(),
+            Cmd.SPLIT_POSITION: lambda _: self.split_position(),
             Cmd.SWITCH_TEXT: lambda _: self.choose_text(),
             Cmd.NEW_FILE: lambda _: self.new_file(),
             Cmd.CLOSE: lambda _: self.close(),
@@ -215,16 +248,30 @@ class Editor:
     def add(self, window: Window) -> Window:
         """Show a window made elsewhere, such as the prompt file of Claude Code."""
         window.layout = self.layout
-        window.height = self.height
         window.deleted = self.deleted
         self.windows.append(window)
         self.show(len(self.windows) - 1)
         return window
 
     def show(self, index: int) -> None:
-        if index != self.current:
+        """Make a text the one edited. The one before is kept for @W (VZ's back text).
+
+        With a split screen, the text goes in the window where the cursor is, unless it
+        is shown in the other one already; then the cursor goes there.
+        """
+        if index == self.current or not self.windows:
+            self.current = index
+            self._relayout()
+            return
+        new, old = self.windows[index], self.windows[self.current]
+        if self.split and new not in self.split_windows and old in self.split_windows:
+            self.split_windows[self.split_windows.index(old)] = new
+            other = next(w for w in self.split_windows if w is not new)
+            self._previous = self.windows.index(other)
+        else:
             self._previous = self.current
         self.current = index
+        self._relayout()
 
     def find(self, path: Path) -> int | None:
         """The index of the text of a file, if it is open."""
@@ -234,14 +281,81 @@ class Editor:
                 return i
         return None
 
-    def resize(self, width: int, height: int) -> None:
-        """Set the size of the text area of the window."""
-        self.layout = replace(self.layout, width=width)
-        self.height = height
-        for window in self.windows:
-            window.layout = self.layout
-            window.height = height
+    def resize(self, columns: int, rows: int) -> None:
+        """Set the size of the terminal."""
+        self.screen = (columns, rows)
+        self.layout = replace(self.layout, width=columns)
+        self._relayout()
+
+    def regions(self) -> list[Region]:
+        """The windows on the screen, the one being edited among them."""
+        if not self.windows:
+            return []
+        columns, rows = self.screen
+        area = max(rows - BOTTOM_ROWS, 2)  # rows for the windows with their status lines
+        if self.split is None or len(self.split_windows) != 2:
+            return [Region(self.window, 0, 0, columns, area - 1)]
+        first, second = self.split_windows
+        if self.split == UPPER_LOWER:
+            row = self.split_row if self.split_row is not None else area // 2
+            row = max(1 + MIN_ROWS, min(row, area - 1 - MIN_ROWS))
+            return [
+                Region(first, 0, 0, columns, row - 1),
+                Region(second, row, 0, columns, area - row - 1),
+            ]
+        column = self.split_column if self.split_column is not None else columns // 2
+        column = max(MIN_COLUMNS, min(column, columns - 1 - MIN_COLUMNS))
+        return [
+            Region(first, 0, 0, column, area - 1),
+            Region(second, 0, column + 1, columns - column - 1, area - 1),
+        ]
+
+    def _relayout(self) -> None:
+        """Give each window shown its width and height."""
+        for region in self.regions():
+            window = region.window
+            window.layout = replace(self.layout, width=max(region.width, 1))
+            window.height = max(region.rows, 1)
             window.keep_visible()
+
+    def split_mode(self) -> None:
+        """@Y: full screen, then upper and lower, then left and right (VZ).
+
+        The text being edited goes on top or on the left, the one before it below or
+        on the right. With one text there is nothing to split.
+        """
+        if len(self.windows) < 2:
+            return
+        if self.split is None:
+            self.split = UPPER_LOWER
+        elif self.split == UPPER_LOWER:
+            self.split = LEFT_RIGHT
+        else:
+            self.split = None
+        back = self._previous if self._previous != self.current else (self.current + 1)
+        back %= len(self.windows)
+        self._previous = back
+        self.split_windows = [self.window, self.windows[back]] if self.split else []
+        self._relayout()
+
+    def split_position(self) -> None:
+        """^KF: move where the screen is split with the cursor keys, until Enter."""
+        if self.split is None:
+            return
+        columns, rows = self.screen
+        regions = self.regions()
+        while True:
+            self.console.message("カーソルキーで位置を移動して[Enter]")
+            number = self.console.key_command()
+            if number in (Cmd.RETURN, Cmd.ESCAPE):
+                self.console.message("")
+                return
+            if self.split == UPPER_LOWER and number in (Cmd.UP, Cmd.DOWN):
+                self.split_row = regions[1].top + (-1 if number == Cmd.UP else 1)
+            elif self.split == LEFT_RIGHT and number in (Cmd.LEFT, Cmd.RIGHT):
+                self.split_column = regions[0].width + (-2 if number == Cmd.LEFT else 2)
+            self._relayout()
+            regions = self.regions()
 
     def name(self, window: Window) -> str:
         path = window.doc.path
@@ -300,7 +414,7 @@ class Editor:
             self.run(*self._last)
 
     def _page(self) -> int:
-        return max(self.height - 1, 1)
+        return max(self.window.height - 1, 1)
 
     def _toggle_insert(self) -> None:
         self.insert_mode = not self.insert_mode
@@ -786,6 +900,8 @@ class Editor:
     def _remove(self, window: Window) -> None:
         index = self.windows.index(window)
         del self.windows[index]
+        if window in self.split_windows:
+            self.split, self.split_windows = None, []
         if not self.windows:
             if not self.keep_open:
                 self.exit_code = 0
@@ -794,6 +910,7 @@ class Editor:
         before = self._previous if self._previous != index else self.current
         self.current = min(before - (before > index), len(self.windows) - 1)
         self._previous = self.current
+        self._relayout()
 
     def _changed_files(self) -> list[Window]:
         """Changed texts other than the prompt file of Claude Code."""

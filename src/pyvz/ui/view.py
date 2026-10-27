@@ -7,11 +7,13 @@ from __future__ import annotations
 import unicodedata
 from dataclasses import dataclass, replace
 
-from pyvz.editor.editor import Editor
+from pyvz.editor.editor import LEFT_RIGHT, Editor, Region
 from pyvz.editor.layout import shown_as
 from pyvz.ui.screen import PLAIN, Screen, Style, clip, clip_middle, clip_start, text_width
 
 STATUS = Style(reverse=True)
+STATUS_OTHER = Style(reverse=True, dim=True)  # of the window the cursor is not in
+FRAME = Style(fg=6)
 CONTROL = Style(fg=6)  # control characters and bytes that are not UTF-8
 MARK = Style(fg=8)  # line ends and the end of the text
 MESSAGE = Style(fg=3, bold=True)
@@ -27,9 +29,6 @@ FUNCTION_LABELS = [
     for label in ["ﾌｧｲﾙ", "窓換", "文換", "窓割", "記憶", "検索", "置換", "ｶｯﾄ", "ｲﾝｻｰﾄ", "ﾌﾞﾛｯｸ"]
 ]
 
-# Rows other than the text: the status line, the message line, the function keys.
-OTHER_ROWS = 3
-
 
 @dataclass
 class Overlay:
@@ -40,26 +39,31 @@ class Overlay:
     question: str = ""  # a Y/N question waiting for the answer
 
 
-def text_rows(height: int) -> int:
-    return max(height - OTHER_ROWS, 1)
-
-
 def draw(screen: Screen, editor: Editor, overlay: Overlay) -> None:
-    rows = text_rows(screen.height)
-    if editor.windows:
-        _status(screen, editor)
-        cursor = _text(screen, editor, 1, rows)
-    else:
-        cursor = None
-    end = draw_message(screen, overlay, rows + 1)
-    _function_keys(screen, rows + 2)
-    screen.cursor = (rows + 1, end) if overlay.question else cursor
+    """The windows, each with its status line, then the message line and the
+    function keys on the last two rows."""
+    cursor = None
+    regions = editor.regions()
+    for region in regions:
+        active = region.window is editor.window
+        _status(screen, editor, region, active)
+        at = _text(screen, region)
+        if active:
+            cursor = at
+    if editor.split == LEFT_RIGHT and len(regions) == 2:
+        column = regions[1].left - 1
+        for row in range(regions[0].rows + 1):
+            screen.put(row, column, "│", FRAME)
+    message_row = max(screen.height - 2, 0)
+    end = draw_message(screen, overlay, message_row)
+    _function_keys(screen, message_row + 1)
+    screen.cursor = (message_row, end) if overlay.question else cursor
 
 
-def _status(screen: Screen, editor: Editor) -> None:
-    window = editor.window
+def _status(screen: Screen, editor: Editor, region: Region, active: bool) -> None:
+    window = region.window
     doc = window.doc
-    number = f" {editor.current + 1} "
+    number = f" {editor.windows.index(window) + 1} "
     marks = (" (CC 下書き)" if window.draft else " (CC)") if window.cc else ""
     marks += " *" if doc.modified else ""
     folded = window.folded(window.line)
@@ -69,20 +73,24 @@ def _status(screen: Screen, editor: Editor) -> None:
     right = f"{flags} {window.line + 1:>5}:{column:<3}"
     wide = screen.ambiguous_wide
     right_width = text_width(right, ambiguous_wide=wide)
-    room = screen.width - right_width - 1
+    room = region.width - right_width - 1
     room -= text_width(number, ambiguous_wide=wide) + text_width(marks, ambiguous_wide=wide)
     # The end of a long path is kept, which tells the files apart.
-    name = clip_start(editor.name(window), room, ambiguous_wide=wide)
-    screen.fill(0, 0, screen.width, STATUS)
-    screen.put(0, 0, number + name + marks, STATUS)
-    screen.put(0, max(screen.width - right_width, 0), right, STATUS)
+    name = clip_start(editor.name(window), max(room, 0), ambiguous_wide=wide)
+    style = STATUS if active else STATUS_OTHER
+    left, row = region.left, region.top
+    screen.fill(row, left, left + region.width, style)
+    screen.put(row, left, number + name + marks, style)
+    if right_width < region.width:
+        screen.put(row, left + region.width - right_width, right, style)
 
 
-def _text(screen: Screen, editor: Editor, first: int, rows: int) -> tuple[int, int] | None:
-    """Draw the rows of the text. Returns where the cursor is on the screen."""
-    window = editor.window
+def _text(screen: Screen, region: Region) -> tuple[int, int] | None:
+    """Draw the rows of the text of a window. Returns where the cursor is."""
+    window = region.window
     lines = window.lines
     cursor_pos = window.cursor_row()
+    first, rows, left = region.top + 1, region.rows, region.left
     block = window.block_range()
     marked = [(b[1], b[2]) for b in [block] if b is not None]
     if window.found is not None:
@@ -105,14 +113,14 @@ def _text(screen: Screen, editor: Editor, first: int, rows: int) -> tuple[int, i
             ch = text[i]
             alt = shown_as(ch, folded.widths[i])
             if alt is None:
-                screen.put(y, folded.columns[i], ch, styled(PLAIN, line_no, i))
+                screen.put(y, left + folded.columns[i], ch, styled(PLAIN, line_no, i))
             else:
                 style = PLAIN if ch == "\t" else CONTROL
-                screen.put(y, folded.columns[i], alt, styled(style, line_no, i))
+                screen.put(y, left + folded.columns[i], alt, styled(style, line_no, i))
         if pos == cursor_pos:
-            cursor = (y, folded.columns[window.index])
+            cursor = (y, left + folded.columns[window.index])
         if row == folded.rows - 1:
-            column = folded.columns[len(text)]
+            column = left + folded.columns[len(text)]
             if line_no < len(lines) - 1:
                 screen.put(y, column, LINE_END_MARK, styled(MARK, line_no, len(text)))
             else:
