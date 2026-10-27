@@ -155,39 +155,63 @@ class Item(NamedTuple):
 
 @dataclass
 class Menu:
-    """A layer: a menu of items chosen by their key letters or with the cursor."""
+    """A layer: a menu of items chosen by their key letters or with the cursor.
+
+    A menu taller than the screen scrolls to keep the chosen item in sight. Items
+    with an empty key are chosen with the cursor only.
+    """
 
     items: list[Item]
     title: str = ""
     top: int = 1
     left: int = 0
     current: int = 0
+    offset: int = 0  # the first item shown
 
     def size(self, screen: Screen) -> tuple[int, int]:
         wide = screen.ambiguous_wide
         inner = max(text_width(f"{i.key} {i.label}", ambiguous_wide=wide) for i in self.items)
         inner = max(inner, text_width(self.title, ambiguous_wide=wide)) + 2
-        return len(self.items) + 2, min(inner + 2, screen.width)
+        height = min(len(self.items) + 2, max(screen.height - 1, 3))
+        return height, min(inner + 2, screen.width)
+
+    def visible(self, screen: Screen) -> int:
+        """How many items fit."""
+        return self.size(screen)[0] - 2
 
     def draw(self, screen: Screen, overlay: Overlay | None = None) -> None:
         height, width = self.size(screen)
+        rows = height - 2
         top = max(min(self.top, screen.height - height), 0)
         left = max(min(self.left, screen.width - width), 0)
-        frame(screen, top, left, height, width, title=self.title)
-        for i, item in enumerate(self.items):
-            row = top + 1 + i
+        if self.current < self.offset:
+            self.offset = self.current
+        elif self.current >= self.offset + rows:
+            self.offset = self.current - rows + 1
+        more = len(self.items) - rows
+        footer = f" {self.offset + 1}-{self.offset + rows}/{len(self.items)} " if more > 0 else ""
+        frame(screen, top, left, height, width, title=self.title, footer=footer)
+        for y in range(rows):
+            i = self.offset + y
+            if i >= len(self.items):
+                break
+            item = self.items[i]
+            row = top + 1 + y
             chosen = i == self.current
             if chosen:
                 screen.fill(row, left + 1, left + width - 1, theme.style("chosen"))
-            column = screen.put(
-                row, left + 2, item.key, theme.style("chosen_hot") if chosen else theme.style("hot")
+            column = left + 2
+            if item.key:
+                hot = theme.style("chosen_hot" if chosen else "hot")
+                column = screen.put(row, column, item.key, hot) + 1
+            label = clip(
+                item.label, left + width - 2 - column, ambiguous_wide=screen.ambiguous_wide
             )
-            label = clip(item.label, width - 6, ambiguous_wide=screen.ambiguous_wide)
-            screen.put(row, column + 1, label, theme.style("chosen") if chosen else PLAIN)
+            screen.put(row, column, label, theme.style("chosen") if chosen else PLAIN)
         screen.cursor = None
 
     def find(self, ch: str) -> int | None:
         for i, item in enumerate(self.items):
-            if item.key.upper() == ch.upper():
+            if item.key and item.key.upper() == ch.upper():
                 return i
         return None

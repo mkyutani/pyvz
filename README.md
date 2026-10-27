@@ -34,6 +34,12 @@ pyvz [DIR]       # start from the filer
 pyvz -c FILE     # edit a prompt file from Claude Code's Ctrl-G (external editor)
 ```
 
+Keys are VZ's. To find your way: F1 opens 【ファイルメニュー】 (open, close, save, and so
+on), and F12 lists the keys of all commands, any of which runs with Enter. ESC is a
+prefix key, as in VZ: press it, let go, then the letter (`[ESC]S` saves, `[ESC]C`
+closes); Alt with the letter works the same. `[ESC]O` and Enter on the empty box open
+the filer.
+
 To install the command from a checkout:
 
 ```sh

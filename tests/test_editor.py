@@ -251,3 +251,23 @@ def test_hold_outside_claude_code(chdir: Path):
     editor, console = editor_with(path)
     editor.run(Cmd.COMMAND_LINE)
     assert console.messages == ["Claude Code から呼ばれていません"]
+
+
+def test_file_menu_runs_the_command_chosen(chdir: Path):
+    path = chdir / "a.txt"
+    path.write_text("abc\n")
+    editor, console = editor_with(path, 2, "a.txt")  # S, then the name in the box
+    editor.type("X")
+    editor.run(Cmd.FILE_MENU)
+    assert console.menus[0][0] == ("O", "ファイルのオープン")
+    assert ("E", "保留して Claude Code へ") not in console.menus[0]  # not a prompt file
+    assert path.read_text() == "Xabc\n"
+
+
+def test_help_lists_the_commands_and_runs_the_one_chosen(chdir: Path):
+    path = chdir / "a.txt"
+    path.write_text("abc\n")
+    editor, console = editor_with(path, Cmd.LINE_END)
+    editor.run(Cmd.HELP)
+    assert Cmd.SAVE in console.helped and Cmd.HELP not in console.helped
+    assert editor.window.index == 3

@@ -105,3 +105,14 @@ def test_choose_among_several_answers():
 
 def test_menu_takes_plain_pairs():
     assert loop_with(b"d").menu([("C", "コピー"), ("D", "削除")]) == 1
+
+
+def test_long_menu_scrolls_and_pages():
+    screen = Screen(30, 8)  # room for 5 items
+    menu = Menu([Item("", f"item {i}") for i in range(20)], current=12)
+    menu.draw(screen)
+    assert screen.text(2).startswith("│ item 8")  # the frame is on row 1
+    assert "9-13/20" in screen.text(7)
+    assert menu.find("") is None  # items without keys are chosen with the cursor only
+    items = [("", f"item {i}") for i in range(20)]
+    assert loop_with(b"\x1b[6~", b"\r").menu(items) > 1  # PgDn

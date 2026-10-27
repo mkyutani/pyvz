@@ -65,3 +65,7 @@ class FakeConsole:
 
     def key_command(self) -> int | None:
         return self.answers.pop(0)
+
+    def help(self, commands: list[int]) -> int | None:
+        self.helped = commands
+        return self.answers.pop(0)

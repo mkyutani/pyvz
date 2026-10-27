@@ -61,6 +61,10 @@ class Console(Protocol):
         """Draw the screen, read a key and give its command, or None."""
         ...
 
+    def help(self, commands: list[int]) -> int | None:
+        """Show the keys of the commands. The command chosen, or None."""
+        ...
+
 
 class Prompt(Protocol):
     """The prompt file of Claude Code, which can be put on hold as a draft."""
@@ -223,6 +227,8 @@ class Editor:
             Cmd.OPEN_READ_ONLY: lambda _: self.open_command(readonly=True),
             Cmd.CLOSE_OPEN: lambda _: self.close_open(),
             Cmd.SWITCH_WINDOW: lambda _: self.switch_back(),
+            Cmd.FILE_MENU: lambda _: self.file_menu(),
+            Cmd.HELP: lambda _: self.show_help(),
             Cmd.SPLIT_MODE: lambda _: self.split_mode(),
             Cmd.SPLIT_POSITION: lambda _: self.split_position(),
             Cmd.SWITCH_TEXT: lambda _: self.choose_text(),
@@ -430,6 +436,35 @@ class Editor:
     def _toggle_read_only(self) -> None:
         doc = self.window.doc
         doc.readonly = not doc.readonly
+
+    # Menus
+
+    def file_menu(self) -> None:
+        """F1: 【ファイルメニュー】 of VZ.DEF (menu 1), with the file commands."""
+        items = [
+            ("O", "ファイルのオープン", Cmd.OPEN),
+            ("C", "ファイルのクローズ", Cmd.CLOSE),
+            ("S", "ファイルのセーブ", Cmd.SAVE),
+            ("N", "新規ファイルオープン", Cmd.NEW_FILE),
+            ("R", "Read only オープン", Cmd.OPEN_READ_ONLY),
+            ("L", "クローズ・オープン", Cmd.CLOSE_OPEN),
+            ("P", "ファイル名の変更", Cmd.RENAME),
+        ]
+        if self.window.cc:
+            items.append(("E", "保留して Claude Code へ", Cmd.COMMAND_LINE))
+        items.append(("Q", "エディタを終了", Cmd.QUIT))
+        chosen = self.console.menu(
+            [(k, label) for k, label, _ in items], title="【ファイルメニュー】"
+        )
+        if isinstance(chosen, int):
+            self.run(items[chosen][2])
+
+    def show_help(self) -> None:
+        """F12: the keys of the commands there are; the one chosen runs (VZ.DEF's help)."""
+        commands = [n for n in sorted(self._commands) if n not in (Cmd.HELP, Cmd.REPEAT)]
+        chosen = self.console.help(commands)
+        if chosen is not None:
+            self.run(chosen)
 
     # Marks and jumps
 

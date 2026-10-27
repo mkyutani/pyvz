@@ -4,6 +4,7 @@ import pytest
 from fakes import FakeTerminal
 
 from pyvz.editor.editor import Editor
+from pyvz.keys.commands import Cmd
 from pyvz.keys.keymap import default_keymap
 from pyvz.ui.loop import Loop
 
@@ -98,3 +99,27 @@ def test_cc_prompt_goes_back_with_esc_c(tmp_path: Path, monkeypatch: pytest.Monk
     code, _ = run(prompt, b"\x11d", b" more", b"\x1bc", cc=True)
     assert code == 0
     assert prompt.read_text() == "draft more"
+
+
+def test_f1_and_f12_from_the_terminal(text_file: Path):
+    terminal = FakeTerminal(b"\x1bOP", b"s", b"\r", b"\x1b[24~", None)
+    loop = Loop(terminal, default_keymap())
+    editor = Editor(loop)
+    loop.editor = editor
+    editor.open(text_file)
+    editor.type("X")
+    with pytest.raises(AssertionError):  # waits in the help menu at the end
+        loop.run()
+    assert text_file.read_text() == "Xabc\ndef\n"
+
+
+def test_help_shows_keys_and_help_texts(text_file: Path):
+    loop = Loop(FakeTerminal(), default_keymap())
+    editor = Editor(loop)
+    loop.editor = editor
+    editor.open(text_file)
+    shown = []
+    loop.menu = lambda items, **kw: shown.extend(items)
+    loop.help([Cmd.SAVE, Cmd.UP, Cmd.SPLIT_MODE])
+    assert shown[0] == ("", f"{'[ESC]S':<18}ファイルのセーブ")
+    assert shown[1] == ("", f"{'^E [UP]':<18}↑")

@@ -107,3 +107,5 @@ class Cmd(IntEnum):
     # Added by pyvz.
     SCREEN_LINE_LEFT = 200  # VZ.DEF macro 12 "画面の左端"
     SCREEN_LINE_RIGHT = 201  # VZ.DEF macro 13 "画面の右端"
+    FILE_MENU = 202  # VZ.DEF macro 2 "【ファイルメニュー】" (F1)
+    HELP = 203  # VZ.DEF macro 1 "ヘルプ" (F12): the keys, to choose a command from

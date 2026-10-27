@@ -143,8 +143,34 @@ class Loop:
         finally:
             self.layers.remove(box)
 
+    def _screen_probe(self) -> Screen:
+        """An empty screen of the size of the terminal, for working out sizes."""
+        columns, rows = self._size
+        return Screen(columns, rows, ambiguous_wide=self.ambiguous_wide)
+
     def remember(self, kind: str, text: str) -> None:
         self.history.add(kind, text)
+
+    def help(self, commands: list[int]) -> int | None:
+        """The keys of the commands in the editor and their help texts, as a menu."""
+        prefixes = self.keymap.prefixes
+        items, numbers = [], []
+        for number in commands:
+            # dict.fromkeys: once each, as [ESC]S and @S are the same key here.
+            bound = [
+                k for k in dict.fromkeys(self.keymap.keys.get(number, [])) if k not in prefixes
+            ]
+            if not bound or self.keymap.command(bound[:1], Mode.EDIT) != number:
+                continue  # no key reaches it while editing
+            keys = " ".join(codes.format_key(k, prefixes) for k in bound[:3])
+            message = self.keymap.messages.get(number, f"#{number}")
+            # VZ's help texts start with the letter of the key after [ESC]: "S ファイルの…"
+            if len(message) > 2 and message[1] == " " and message[0].isascii():
+                message = message[2:]
+            items.append(("", f"{keys:<18}{message}"))
+            numbers.append(number)
+        chosen = self.menu(items, title="【ヘルプ】 Enter で実行")
+        return numbers[chosen] if isinstance(chosen, int) else None
 
     def key_command(self) -> int | None:
         self.draw()
@@ -202,10 +228,19 @@ class Loop:
                         return None
                     if number == Cmd.RETURN:
                         return menu.current
+                    page = max(menu.visible(self._screen_probe()) - 1, 1)
                     if number == Cmd.UP:
                         menu.current = (menu.current - 1) % len(items)
                     elif number == Cmd.DOWN:
                         menu.current = (menu.current + 1) % len(items)
+                    elif number in (Cmd.PAGE_UP, Cmd.ROLL_UP):
+                        menu.current = max(menu.current - page, 0)
+                    elif number in (Cmd.PAGE_DOWN, Cmd.ROLL_DOWN):
+                        menu.current = min(menu.current + page, len(items) - 1)
+                    elif number == Cmd.TEXT_TOP:
+                        menu.current = 0
+                    elif number == Cmd.TEXT_END:
+                        menu.current = len(items) - 1
                     elif sideways and number in (Cmd.LEFT, Cmd.RIGHT):
                         return "left" if number == Cmd.LEFT else "right"
         finally:

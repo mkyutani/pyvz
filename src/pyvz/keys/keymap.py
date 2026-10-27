@@ -157,8 +157,12 @@ def vz_keymap(text: str | None = None) -> Keymap:
         keymap.bind(Cmd.MARK_POSITION, codes.PREFIX_DIGIT | k)  # ^K1-^K4: set a mark
     # In the filer, [END] goes to the last file as [HOME] ([CLR]) goes to the first.
     keymap.bind(Cmd.FILER_TOP_END, codes.END)
+    keymap.bind(Cmd.FILE_MENU, codes.special("F1"))
+    keymap.bind(Cmd.HELP, codes.special("F12"))
     keymap.messages[Cmd.SCREEN_LINE_LEFT] = "画面の左端"
     keymap.messages[Cmd.SCREEN_LINE_RIGHT] = "画面の右端"
+    keymap.messages[Cmd.FILE_MENU] = "ファイルメニュー"
+    keymap.messages[Cmd.HELP] = "ヘルプ（キーの一覧）"
     return keymap
 
 
